@@ -25,7 +25,7 @@ public sealed class WindowEntry : INotifyPropertyChanged
 
     public string DisplayTitle => TitleRules.Simplify(title);
 
-    public ImageSource? IconImage => TitleRules.GetIcon(title);
+    public ImageSource? IconImage => CursorFavicon.TryGet(title) ?? TitleRules.GetIcon(title);
 
     public void RefreshDerived()
     {

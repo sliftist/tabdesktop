@@ -46,7 +46,7 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                            <Border x:Name="TabRoot" Width="200" Margin="1" Padding="6,2" Cursor="Hand" ClipToBounds="True" MouseLeftButtonDown="OnTabMouseDown" MouseMove="OnTabMouseMove" MouseLeftButtonUp="OnTabMouseUp">
+                            <Border x:Name="TabRoot" Width="200" Margin="1" Padding="6,2" Cursor="Hand" ClipToBounds="True" MouseLeftButtonDown="OnTabMouseDown" MouseMove="OnTabMouseMove" MouseLeftButtonUp="OnTabMouseUp" LostMouseCapture="OnTabLostCapture">
                                 <Border.Style>
                                     <Style TargetType="Border">
                                         <Setter Property="Background" Value="#FF2A2A2A" />

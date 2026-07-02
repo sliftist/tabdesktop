@@ -20,6 +20,7 @@ public partial class TabStripWindow : Window
     private readonly Action<WindowEntry, double> reorderRequested;
     private readonly Action showMainRequested;
     private WindowGroup? currentGroup;
+    private WindowGroup? pendingGroup;
     private double currentDpiScale = 1;
     private bool collapsed;
     private WindowEntry? dragEntry;
@@ -47,6 +48,13 @@ public partial class TabStripWindow : Window
     // dpiScale converts the scanner's physical pixels to WPF's device-independent units; on mixed-DPI setups this is only exact on monitors matching the system DPI.
     public void Update(WindowGroup group, double dpiScale)
     {
+        // Replacing ItemsSource mid-drag regenerates the tab containers, which kills the captured Border and strands the drag; defer refreshes until the drag ends.
+        if (dragEntry is not null)
+        {
+            pendingGroup = group;
+            currentDpiScale = dpiScale;
+            return;
+        }
         currentGroup = group;
         currentDpiScale = dpiScale;
         MemberHwnds = group.Members.Select(m => m.Hwnd).ToHashSet();
@@ -148,21 +156,50 @@ public partial class TabStripWindow : Window
         WindowEntry entry = dragEntry;
         Border border = dragBorder!;
         bool wasDragging = dragging;
-        dragEntry = null;
-        dragBorder = null;
-        dragging = false;
+        ClearDragState(entry);
         border.ReleaseMouseCapture();
-        entry.IsDragging = false;
-        DropIndicator.Visibility = Visibility.Collapsed;
         if (!wasDragging)
         {
+            ApplyPendingGroup();
             focusRequested(entry.Hwnd);
             return;
         }
+        // Compute the drop before applying any deferred group update — it reads the tab containers the drag happened over.
         double newKey = ComputeDropKey(e.GetPosition(Tabs), entry);
+        ApplyPendingGroup();
         if (newKey != entry.OrderKey)
         {
             reorderRequested(entry, newKey);
+        }
+    }
+
+    private void OnTabLostCapture(object sender, MouseEventArgs e)
+    {
+        if (dragEntry is null)
+        {
+            return;
+        }
+        WindowEntry entry = dragEntry;
+        ClearDragState(entry);
+        ApplyPendingGroup();
+    }
+
+    private void ClearDragState(WindowEntry entry)
+    {
+        entry.IsDragging = false;
+        DropIndicator.Visibility = Visibility.Collapsed;
+        dragEntry = null;
+        dragBorder = null;
+        dragging = false;
+    }
+
+    private void ApplyPendingGroup()
+    {
+        if (pendingGroup is not null)
+        {
+            WindowGroup group = pendingGroup;
+            pendingGroup = null;
+            Update(group, currentDpiScale);
         }
     }
 
