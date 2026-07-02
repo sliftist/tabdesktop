@@ -30,35 +30,18 @@
             <Border Background="#FF1E1E1E" BorderBrush="#FF3A3A3A" BorderThickness="1" CornerRadius="3" Padding="3">
                 <StackPanel Orientation="Horizontal">
                     <Button Click="OnToggleFolderTitle" ToolTip="Show the process's directory as the title — applies to every window of this program and is remembered">
-                        <Viewbox Width="22" Height="20" Margin="3">
-                        <Grid Width="14" Height="13">
-                            <Path Data="M0,12 L0,2 Q0,1 1,1 L5,1 Q5.6,1 6,1.6 L7,3 L13,3 Q14,3 14,4 L14,12 Q14,13 13,13 L1,13 Q0,13 0,12 Z" Stroke="#FFD35C" StrokeThickness="1" Fill="Transparent">
-                                <Path.Style>
-                                    <Style TargetType="Path">
-                                        <Setter Property="Visibility" Value="Collapsed" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding DirectoryTitle}" Value="{x:Null}">
-                                                <Setter Property="Visibility" Value="Visible" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Path.Style>
-                            </Path>
-                            <Grid>
-                                <Grid.Style>
-                                    <Style TargetType="Grid">
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding DirectoryTitle}" Value="{x:Null}">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Grid.Style>
-                                <Path Data="M0,12 L0,2 Q0,1 1,1 L5,1 Q5.6,1 6,1.6 L7,3 L13,3 Q14,3 14,4 L14,12 Q14,13 13,13 L1,13 Q0,13 0,12 Z" Fill="#D99C2B" />
-                                <Path Data="M0,12 L0,5.5 Q0,4.5 1,4.5 L13,4.5 Q14,4.5 14,5.5 L14,12 Q14,13 13,13 L1,13 Q0,13 0,12 Z" Fill="#FFD35C" />
-                            </Grid>
-                        </Grid>
-                        </Viewbox>
+                        <TextBlock Text="📁" FontFamily="Segoe UI Emoji" FontSize="20" Margin="3">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Opacity" Value="1" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DirectoryTitle}" Value="{x:Null}">
+                                            <Setter Property="Opacity" Value="0.35" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
                     </Button>
                     <Button Click="OnToggleVideoThumbnail" ToolTip="Show video thumbnails for this tab's site — whitelists the domain and is remembered">
                         <Button.Style>
@@ -70,7 +53,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Button.Style>
-                        <TextBlock Text="🎬" FontSize="20" Margin="3">
+                        <TextBlock Text="🎬" FontFamily="Segoe UI Emoji" FontSize="20" Margin="3">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Opacity" Value="0.35" />
@@ -84,7 +67,7 @@
                         </TextBlock>
                     </Button>
                     <Button Click="OnToggleScreenshotThumbnail" ToolTip="Use a screenshot (captured while the window is focused) as the thumbnail — applies to every window of this program and is remembered">
-                        <TextBlock Text="📷" FontSize="20" Margin="3">
+                        <TextBlock Text="📷" FontFamily="Segoe UI Emoji" FontSize="20" Margin="3">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Opacity" Value="0.35" />
@@ -107,7 +90,7 @@
                                 </Style.Triggers>
                             </Style>
                         </Button.Style>
-                        <TextBlock Text="🗂️" FontSize="20" Margin="3">
+                        <TextBlock Text="🗂️" FontFamily="Segoe UI Emoji" FontSize="20" Margin="3">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Opacity" Value="0.35" />
@@ -134,7 +117,7 @@
                     <Button Content="⟳" FontSize="14" Click="OnRebuildRestart" ToolTip="Close, rebuild, and restart TabDesktop" />
                     <Button x:Name="ExtensionButton" Click="OnInstallExtension" ToolTip="Install the browser extension — video thumbnails straight from your tabs, including logged-in sites">
                         <Border x:Name="ExtensionIconChip" CornerRadius="3" Padding="2,0" Background="Transparent">
-                            <TextBlock x:Name="ExtensionIcon" Text="🧩" FontSize="13" Opacity="0.4" />
+                            <TextBlock x:Name="ExtensionIcon" Text="🧩" FontFamily="Segoe UI Emoji" FontSize="13" Opacity="0.4" />
                         </Border>
                     </Button>
                     <Button x:Name="HeightButton" Content="⇑" FontSize="12" Click="OnToggleDoubleHeight" ToolTip="Double the strip height — tiles stay the same size, so twice as many fit" />
@@ -169,11 +152,8 @@
                                         </Style.Triggers>
                                     </Style>
                                 </Border.Style>
-                                <Grid>
+                                <Grid Opacity="{Binding IdleOpacity}">
                                     <Border>
-                                        <Border.Background>
-                                            <ImageBrush ImageSource="{Binding Thumbnail}" Stretch="UniformToFill" Opacity="0.35" />
-                                        </Border.Background>
                                         <DockPanel>
                                             <Grid DockPanel.Dock="Left" Width="14" Height="13" Margin="0,1,4,0" VerticalAlignment="Top" ToolTip="Showing the process's directory — right-click the tab to toggle">
                                                 <Grid.Style>

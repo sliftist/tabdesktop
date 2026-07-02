@@ -19,6 +19,11 @@ public partial class MainWindow : Window
     private const double GroupOverlapThreshold = 0.5;
     private static readonly TimeSpan PreviewMaxAge = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan TitleChangeCaptureMinInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan IdleFadeStart = TimeSpan.FromHours(24);
+    private static readonly TimeSpan IdleFadeEnd = TimeSpan.FromHours(72);
+    private const double MaxIdleTransparency = 0.25;
+    // The fade moves imperceptibly slowly, so a coarse recompute cadence is plenty.
+    private static readonly TimeSpan IdleFadeRefreshInterval = TimeSpan.FromMinutes(15);
     // Expanded browser-tab entries slot between their parent and the next real window without disturbing persisted order keys.
     private const double BrowserTabOrderStep = 0.001;
 
@@ -39,6 +44,9 @@ public partial class MainWindow : Window
     private readonly Dictionary<IntPtr, int> browserWindowIdByHwnd = new();
     private readonly ProcessWorkerPool workerPool = new();
     private readonly DispatcherTimer refreshTimer;
+    private readonly DispatcherTimer idleFadeTimer;
+    // Baseline for windows never focused while the app has been running: their true last-focus time is unknowable, so idle is measured from app start.
+    private static readonly long appStartedAt = Stopwatch.GetTimestamp();
 
     public MainWindow()
     {
@@ -68,6 +76,9 @@ public partial class MainWindow : Window
         refreshTimer = new DispatcherTimer { Interval = RefreshInterval };
         refreshTimer.Tick += (_, _) => RefreshWindows();
         refreshTimer.Start();
+        idleFadeTimer = new DispatcherTimer { Interval = IdleFadeRefreshInterval };
+        idleFadeTimer.Tick += (_, _) => UpdateIdleOpacity();
+        idleFadeTimer.Start();
         Loaded += (_, _) => RefreshWindows();
     }
 
@@ -171,6 +182,8 @@ public partial class MainWindow : Window
         if (entriesByHwnd.TryGetValue(foreground, out WindowEntry? focusedEntry))
         {
             focusedEntry.LastFocusedAt = Stopwatch.GetTimestamp();
+            // Un-fade immediately on focus rather than waiting out the slow fade timer.
+            focusedEntry.IdleOpacity = 1;
         }
 
         foreach (IGrouping<uint, (IntPtr Hwnd, uint Pid, bool IsMinimized)> group in candidates.Where(c => !c.IsMinimized).GroupBy(c => c.Pid))
@@ -298,6 +311,8 @@ public partial class MainWindow : Window
             List<WindowEntry> ordered = members.OrderBy(EnsureOrder).ThenByDescending(m => m.ZIndex).ToList();
             WindowEntry? lastFocused = ordered.Where(m => m.LastFocusedAt != 0).OrderByDescending(m => m.LastFocusedAt).FirstOrDefault();
             var display = new List<WindowEntry>();
+            // Expanded browser tabs always sort after every real window, so a fan of tabs can't bury the actual windows in the strip.
+            var expandedTail = new List<WindowEntry>();
             foreach (WindowEntry member in ordered)
             {
                 member.IsGroupLastFocused = member == lastFocused;
@@ -312,8 +327,9 @@ public partial class MainWindow : Window
                     continue;
                 }
                 browserWindowIdByHwnd[member.Hwnd] = tabs[0].WindowId;
-                display.AddRange(BuildBrowserTabEntries(member, tabs));
+                expandedTail.AddRange(BuildBrowserTabEntries(member, tabs));
             }
+            display.AddRange(expandedTail);
             groups.Add(new WindowGroup
             {
                 CanvasLeft = bounds.X,
@@ -359,6 +375,12 @@ public partial class MainWindow : Window
             entry.OrderKey = parent.OrderKey + (i + 1) * BrowserTabOrderStep;
             entry.IsForeground = parent.IsForeground && tab.Active;
             entry.IsGroupLastFocused = parent.IsGroupLastFocused && tab.Active;
+            // The active tab shares the window's focus recency; inactive tabs keep the time from when they were last the active one, fading independently.
+            if (tab.Active)
+            {
+                entry.LastFocusedAt = parent.LastFocusedAt;
+                entry.IdleOpacity = 1;
+            }
             // The window screenshot can only ever show the selected tab, so it's assigned to (and cached on) the active tab's entry alone; inactive tabs keep the shot from when they were last selected.
             if (tab.Active && parent.Thumbnail is not null)
             {
@@ -374,6 +396,29 @@ public partial class MainWindow : Window
     }
 
     // Toggling from a tab pseudo-entry routes to the real window entry it belongs to.
+    private void UpdateIdleOpacity()
+    {
+        foreach (WindowEntry entry in windows)
+        {
+            entry.IdleOpacity = ComputeIdleOpacity(entry.LastFocusedAt);
+        }
+        foreach (WindowEntry entry in browserTabEntries.Values)
+        {
+            entry.IdleOpacity = ComputeIdleOpacity(entry.LastFocusedAt);
+        }
+    }
+
+    private static double ComputeIdleOpacity(long lastFocusedAt)
+    {
+        TimeSpan idle = Stopwatch.GetElapsedTime(lastFocusedAt != 0 ? lastFocusedAt : appStartedAt);
+        if (idle <= IdleFadeStart)
+        {
+            return 1;
+        }
+        double progress = Math.Min(1, (idle - IdleFadeStart) / (IdleFadeEnd - IdleFadeStart));
+        return 1 - MaxIdleTransparency * progress;
+    }
+
     private void ToggleExpandTabs(WindowEntry entry)
     {
         WindowEntry target = entry.BrowserTab is not null && entriesByHwnd.TryGetValue(entry.Hwnd, out WindowEntry? parent) ? parent : entry;

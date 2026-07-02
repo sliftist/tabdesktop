@@ -25,6 +25,9 @@ public static class ExtensionThumbnails
     private static readonly TimeSpan ConnectedTimeout = TimeSpan.FromSeconds(45);
     // Pings keep the MV3 service worker alive (incoming socket messages reset its idle timer) and double as dead-socket detection.
     private static readonly TimeSpan WebSocketPingInterval = TimeSpan.FromSeconds(20);
+    // The title→URL map persists so disk-cached thumbnails resolve at startup, before the extension's first report; saved on a timer because reports mutate it constantly.
+    private static readonly string UrlsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TabDesktop", "thumbnail-urls.json");
+    private static readonly TimeSpan UrlsSaveInterval = TimeSpan.FromMinutes(1);
     // Fixed by RFC 6455 for computing Sec-WebSocket-Accept.
     private const string WebSocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -37,6 +40,10 @@ public static class ExtensionThumbnails
     private static readonly object socketsGate = new();
     private static readonly List<WebSocketConnection> sockets = new();
     private static Timer? pingTimer;
+    private static Timer? urlSaveTimer;
+    private static bool urlsDirty;
+    private static readonly HashSet<string> diskLoadPending = new();
+    private static readonly HashSet<string> diskLoadMissed = new();
 
     public static event Action? Updated;
 
@@ -59,14 +66,45 @@ public static class ExtensionThumbnails
             return null;
         }
         string key = BrowserFavicon.StripNotificationCount(pageTitle);
+        string? url;
         lock (gate)
         {
-            if (!ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.GetHost(urlsByTitle.GetValueOrDefault(key))))
+            url = urlsByTitle.GetValueOrDefault(key);
+            if (!ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.GetHost(url)))
             {
                 return null;
             }
-            return thumbnailsByTitle.GetValueOrDefault(key);
+            if (thumbnailsByTitle.TryGetValue(key, out ImageSource? image))
+            {
+                return image;
+            }
+            if (url is null || diskLoadMissed.Contains(key) || !diskLoadPending.Add(key))
+            {
+                return null;
+            }
         }
+        // Memory miss with a known URL: the disk cache may still have it from a previous run. Off-thread because this getter runs on the UI thread inside bindings.
+        Task.Run(() =>
+        {
+            ImageSource? loaded = ThumbnailDiskCache.TryLoad(url);
+            lock (gate)
+            {
+                diskLoadPending.Remove(key);
+                if (loaded is not null)
+                {
+                    thumbnailsByTitle[key] = loaded;
+                }
+                else
+                {
+                    diskLoadMissed.Add(key);
+                }
+            }
+            if (loaded is not null)
+            {
+                Updated?.Invoke();
+            }
+        });
+        return null;
     }
 
     // The URL of the report that carried a title; lets the whitelist toggle learn a tab's domain without touching History.
@@ -85,7 +123,9 @@ public static class ExtensionThumbnails
 
     public static void Start()
     {
+        LoadUrls();
         pingTimer = new Timer(_ => Broadcast(0x9, Array.Empty<byte>()), null, WebSocketPingInterval, WebSocketPingInterval);
+        urlSaveTimer = new Timer(_ => SaveUrlsIfDirty(), null, UrlsSaveInterval, UrlsSaveInterval);
         Task.Run(() =>
         {
             try
@@ -248,16 +288,24 @@ public static class ExtensionThumbnails
         string key = BrowserFavicon.StripNotificationCount(report.Title);
         lock (gate)
         {
-            if (!urlsByTitle.ContainsKey(key))
+            if (!urlsByTitle.TryGetValue(key, out string? existingUrl))
             {
                 insertionOrder.Enqueue(key);
+                urlsDirty = true;
+            }
+            else if (existingUrl != report.Url)
+            {
+                urlsDirty = true;
             }
             urlsByTitle[key] = report.Url;
+            // A fresh report may carry an image the disk cache lacked earlier.
+            diskLoadMissed.Remove(key);
             while (insertionOrder.Count > MaxCachedTitles)
             {
                 string evicted = insertionOrder.Dequeue();
                 urlsByTitle.Remove(evicted);
                 thumbnailsByTitle.Remove(evicted);
+                urlsDirty = true;
             }
         }
         bool whitelisted = ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.GetHost(report.Url));
@@ -280,6 +328,10 @@ public static class ExtensionThumbnails
             return;
         }
         ImageSource image = BrowserFavicon.DecodeImage(imageBytes);
+        if (!string.IsNullOrEmpty(report.Url))
+        {
+            ThumbnailDiskCache.Save(report.Url, imageBytes);
+        }
         lock (gate)
         {
             thumbnailsByTitle[key] = image;
@@ -415,6 +467,55 @@ public static class ExtensionThumbnails
             }
         }
         return any;
+    }
+
+    private static void LoadUrls()
+    {
+        try
+        {
+            if (!File.Exists(UrlsPath))
+            {
+                return;
+            }
+            Dictionary<string, string?> loaded = JsonSerializer.Deserialize<Dictionary<string, string?>>(File.ReadAllText(UrlsPath)) ?? new Dictionary<string, string?>();
+            lock (gate)
+            {
+                foreach ((string title, string? url) in loaded)
+                {
+                    if (urlsByTitle.TryAdd(title, url))
+                    {
+                        insertionOrder.Enqueue(title);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(nameof(ExtensionThumbnails), ex.ToString());
+        }
+    }
+
+    private static void SaveUrlsIfDirty()
+    {
+        try
+        {
+            Dictionary<string, string?> snapshot;
+            lock (gate)
+            {
+                if (!urlsDirty)
+                {
+                    return;
+                }
+                urlsDirty = false;
+                snapshot = new Dictionary<string, string?>(urlsByTitle);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(UrlsPath)!);
+            File.WriteAllText(UrlsPath, JsonSerializer.Serialize(snapshot));
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(nameof(ExtensionThumbnails), ex.ToString());
+        }
     }
 
     // Data URLs carry either base64 (";base64" in the header) or percent-encoded text after the comma.

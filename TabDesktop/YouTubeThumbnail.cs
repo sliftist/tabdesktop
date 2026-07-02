@@ -92,7 +92,14 @@ public static class YouTubeThumbnail
             AppLog.Write(nameof(YouTubeThumbnail), $"History URL for \"{pageTitle}\" has no video id: {url}");
             return null;
         }
-        byte[] bytes = http.GetByteArrayAsync(string.Format(ThumbnailUrlFormat, match.Groups[1].Value)).GetAwaiter().GetResult();
+        string thumbnailUrl = string.Format(ThumbnailUrlFormat, match.Groups[1].Value);
+        ImageSource? cached = ThumbnailDiskCache.TryLoad(thumbnailUrl);
+        if (cached is not null)
+        {
+            return cached;
+        }
+        byte[] bytes = http.GetByteArrayAsync(thumbnailUrl).GetAwaiter().GetResult();
+        ThumbnailDiskCache.Save(thumbnailUrl, bytes);
         return BrowserFavicon.DecodeImage(bytes);
     }
 }

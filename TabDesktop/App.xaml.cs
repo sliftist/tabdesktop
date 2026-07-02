@@ -8,6 +8,7 @@ public partial class App : Application
     {
         AppLog.Install();
         ExtensionThumbnails.Start();
+        ThumbnailDiskCache.PruneInBackground();
         try
         {
             ExtensionInstaller.EnsureDeployed();

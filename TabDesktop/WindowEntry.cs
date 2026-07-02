@@ -134,6 +134,10 @@ public sealed class WindowEntry : INotifyPropertyChanged
     private bool isDragging;
     public bool IsDragging { get => isDragging; set => Set(ref isDragging, value); }
 
+    // Fades the tab as the window sits unfocused; recomputed on a slow timer in MainWindow.
+    private double idleOpacity = 1;
+    public double IdleOpacity { get => idleOpacity; set => Set(ref idleOpacity, value); }
+
     // Tab sort key: defaults to the detection timestamp (spaced at least 1 apart), replaced by a neighbor-midpoint value on manual reorder. Not bound in XAML, so no INPC.
     public double OrderKey { get; set; }
 
