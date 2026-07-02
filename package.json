@@ -4,8 +4,11 @@
     "private": true,
     "scripts": {
         "build": "node scripts/dotnet.js build TabDesktop",
+        "build-claude": "node scripts/dotnet.js build TabDesktop -o TabDesktop/bin/claude-check",
+        "bundle-claude": "node scripts/dotnet.js publish TabDesktop -c Release -o TabDesktop/bin/claude-publish",
         "start": "node scripts/dotnet.js run --project TabDesktop",
         "release": "node scripts/dotnet.js publish TabDesktop -c Release -o dist",
+        "publish-release": "node scripts/publish-release.js",
         "clean": "node scripts/dotnet.js clean TabDesktop"
     }
 }

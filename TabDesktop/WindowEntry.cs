@@ -9,6 +9,7 @@ public sealed class WindowEntry : INotifyPropertyChanged
 {
     public required IntPtr Hwnd { get; init; }
     public required uint Pid { get; init; }
+    public string? ExePath { get; init; }
 
     private string title = "";
     public string Title
@@ -23,14 +24,65 @@ public sealed class WindowEntry : INotifyPropertyChanged
         }
     }
 
-    public string DisplayTitle => TitleRules.Simplify(title);
+    // Non-null when the user opted this window's process into directory titles; wins over the title-rule pipeline.
+    private string? directoryTitle;
+    public string? DirectoryTitle
+    {
+        get => directoryTitle;
+        set
+        {
+            if (Set(ref directoryTitle, value))
+            {
+                Raise(nameof(DisplayTitle));
+            }
+        }
+    }
 
-    public ImageSource? IconImage => CursorFavicon.TryGet(title) ?? TitleRules.GetIcon(title);
+    public string DisplayTitle => directoryTitle ?? TitleRules.Simplify(title);
+
+    // Extension-pushed thumbnails (exact, auth-aware, any site) win over the History-based YouTube fallback; for screenshot-whitelisted executables the focused-window capture stands in.
+    public ImageSource? VideoThumbnail => ExtensionThumbnails.TryGet(title) ?? YouTubeThumbnail.TryGet(title, NotifyIconResolved) ?? (IsScreenshotThumbnailEnabled ? thumbnail : null);
+
+    public bool IsBrowserTab => BrowserFavicon.GetPageTitle(title) is not null;
+
+    // Non-null marks this entry as a pseudo-entry for one browser tab of an expanded window; clicking it activates that tab instead of just focusing the window.
+    private BrowserTab? browserTabValue;
+    public BrowserTab? BrowserTab { get => browserTabValue; set => Set(ref browserTabValue, value); }
+
+    // Per-window (not persisted): show one strip entry per browser tab, fed by the extension's tab reports.
+    private bool expandTabs;
+    public bool ExpandTabs { get => expandTabs; set => Set(ref expandTabs, value); }
+
+    // Shown on browser windows and on their expanded tab entries alike — toggling from a tab entry collapses the parent window's expansion.
+    public bool CanExpandTabs => IsBrowserTab;
+
+    public bool IsVideoThumbnailEnabled => ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.TryGet(title, NotifyIconResolved));
+
+    public bool IsScreenshotThumbnailEnabled => ThumbnailWhitelist.IsScreenshotExe(ExePath);
+
+    // The video thumbnail supersedes the small favicon (which would just be the YouTube logo next to the video's own image).
+    public ImageSource? IconImage => VideoThumbnail is not null ? null : BrowserFavicon.TryGet(title, NotifyIconResolved) ?? CursorFavicon.TryGet(title) ?? TitleRules.GetIcon(title) ?? WindowIcon.TryGet(Hwnd, Pid, NotifyIconResolved);
+
+    // Icon/thumbnail resolution finishes on a background task; hop to the UI thread and re-raise so the bindings re-read the now-cached images.
+    private void NotifyIconResolved()
+    {
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            Raise(nameof(VideoThumbnail));
+            Raise(nameof(IconImage));
+            Raise(nameof(IsVideoThumbnailEnabled));
+        });
+    }
 
     public void RefreshDerived()
     {
         Raise(nameof(DisplayTitle));
+        Raise(nameof(VideoThumbnail));
         Raise(nameof(IconImage));
+        Raise(nameof(IsBrowserTab));
+        Raise(nameof(CanExpandTabs));
+        Raise(nameof(IsVideoThumbnailEnabled));
+        Raise(nameof(IsScreenshotThumbnailEnabled));
     }
 
     private string positionText = "";
@@ -43,7 +95,17 @@ public sealed class WindowEntry : INotifyPropertyChanged
     public string Status { get => status; set => Set(ref status, value); }
 
     private BitmapSource? thumbnail;
-    public BitmapSource? Thumbnail { get => thumbnail; set => Set(ref thumbnail, value); }
+    public BitmapSource? Thumbnail
+    {
+        get => thumbnail;
+        set
+        {
+            if (Set(ref thumbnail, value))
+            {
+                Raise(nameof(VideoThumbnail));
+            }
+        }
+    }
 
     private double canvasLeft;
     public double CanvasLeft { get => canvasLeft; set => Set(ref canvasLeft, value); }

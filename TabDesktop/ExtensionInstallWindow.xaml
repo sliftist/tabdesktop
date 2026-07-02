@@ -1,0 +1,60 @@
+<Window x:Class="TabDesktop.ExtensionInstallWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Install the TabDesktop browser extension" Width="580" SizeToContent="Height" WindowStartupLocation="CenterScreen" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" Background="#FF1E1E1E">
+    <Window.Resources>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="Margin" Value="0,0,0,10" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="IsReadOnly" Value="True" />
+            <Setter Property="Background" Value="#FF2A2A2A" />
+            <Setter Property="Foreground" Value="#FFCCCCCC" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#FF3D6B8F" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Padding" Value="12,5" />
+            <Setter Property="Margin" Value="8,0,0,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}" CornerRadius="3">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF4A82AD" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="24,20">
+        <TextBlock FontSize="14" FontWeight="Bold" Text="Video thumbnails straight from your tabs" />
+        <TextBlock Text="A small extension reports each video tab's thumbnail directly from the page, so it works on logged-in sites (Jellyfin, etc.) too. It runs entirely locally and only talks to TabDesktop at 127.0.0.1. Browsers require unpacked extensions to be loaded by hand, so this takes three quick steps:" />
+
+        <TextBlock FontWeight="Bold" Text="1.  Open the extensions page — browsers don't let apps open it directly, so paste this into the address bar:" />
+        <StackPanel x:Name="ExtensionUrls" Margin="18,0,0,12" />
+
+        <TextBlock FontWeight="Bold" Text="2.  Turn on “Developer mode” — the toggle in the top-right corner of that page." />
+
+        <TextBlock FontWeight="Bold" Text="3.  Drag the BrowserExtension folder anywhere onto that page (or click “Load unpacked” and pick it):" />
+        <DockPanel Margin="18,0,0,12">
+            <Button DockPanel.Dock="Right" Content="Open in File Explorer" Click="OnOpenFolder" />
+            <TextBox Text="" x:Name="FolderPathText" />
+        </DockPanel>
+
+        <TextBlock Text="That's it — refresh any video tabs that were already open, and their thumbnails appear in the tab strip within a few seconds. You can keep using everything else while this window is open." />
+        <Button Content="Close" HorizontalAlignment="Right" Click="OnClose" />
+    </StackPanel>
+</Window>

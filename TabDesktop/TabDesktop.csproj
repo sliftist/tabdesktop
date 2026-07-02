@@ -8,8 +8,25 @@
     <UseWPF>true</UseWPF>
   </PropertyGroup>
 
+  <!-- Only applied by `dotnet publish` (the SDK sets _IsPublishing there), so normal builds/runs stay framework-dependent and fast. Self-contained because target machines won't have the runtime installed. -->
+  <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
   <ItemGroup>
-    <None Update="build-and-run.bat" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="build-and-run.bat" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" />
+    <None Update="BrowserExtension\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.9" />
+    <!-- Overrides the transitive 2.1.11 bundle, whose native SQLite has a known vulnerability (NU1903 / GHSA-2m69-gcr7-jv3q). Removable once Microsoft.Data.Sqlite depends on a patched bundle itself. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 
 </Project>

@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using TabDesktop.Interop;
 
@@ -34,8 +35,10 @@ public static class WindowCapture
             NativeMethods.SetStretchBltMode(thumbDc, NativeMethods.HALFTONE);
             NativeMethods.StretchBlt(thumbDc, 0, 0, thumbWidth, thumbHeight, fullDc, 0, 0, width, height, NativeMethods.SRCCOPY);
             BitmapSource source = Imaging.CreateBitmapSourceFromHBitmap(thumbBitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
-            source.Freeze();
-            return source;
+            // GDI blits leave the 32bpp alpha channel zeroed, and CreateBitmapSourceFromHBitmap surfaces that as Bgra32 — every pixel fully transparent, so the image renders as nothing. Re-typing to Bgr32 keeps the same pixel bytes but ignores alpha.
+            var opaque = new FormatConvertedBitmap(source, PixelFormats.Bgr32, null, 0);
+            opaque.Freeze();
+            return opaque;
         }
         finally
         {

@@ -58,6 +58,24 @@ public static class CursorFavicon
         {
             return null;
         }
+        // Gradient fills collapse to their first stop color — at icon size a flat approximation is indistinguishable and avoids implementing SVG gradient geometry.
+        var gradientColors = new Dictionary<string, Color>();
+        foreach (XElement gradient in root.Descendants().Where(e => e.Name.LocalName is "linearGradient" or "radialGradient"))
+        {
+            string? id = gradient.Attribute("id")?.Value;
+            string? stopColor = gradient.Descendants().FirstOrDefault(e => e.Name.LocalName == "stop")?.Attribute("stop-color")?.Value;
+            if (id is null || stopColor is null)
+            {
+                continue;
+            }
+            try
+            {
+                gradientColors[id] = (Color)ColorConverter.ConvertFromString(stopColor);
+            }
+            catch
+            {
+            }
+        }
         var group = new DrawingGroup();
         string? viewBox = root.Attribute("viewBox")?.Value;
         if (viewBox is not null)
@@ -65,7 +83,9 @@ public static class CursorFavicon
             double[] bounds = viewBox.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries).Select(double.Parse).ToArray();
             if (bounds.Length == 4)
             {
-                group.Children.Add(new GeometryDrawing(Brushes.Transparent, null, new RectangleGeometry(new Rect(bounds[0], bounds[1], bounds[2], bounds[3]))));
+                var viewBoxRect = new Rect(bounds[0], bounds[1], bounds[2], bounds[3]);
+                group.Children.Add(new GeometryDrawing(Brushes.Transparent, null, new RectangleGeometry(viewBoxRect)));
+                group.ClipGeometry = new RectangleGeometry(viewBoxRect);
             }
         }
         int pathCount = 0;
@@ -77,18 +97,16 @@ public static class CursorFavicon
             {
                 continue;
             }
-            Brush brush;
+            Brush brush = ResolveFill(fill, gradientColors);
             try
             {
-                brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(fill));
-            }
-            catch
-            {
-                brush = Brushes.Gray;
-            }
-            try
-            {
-                group.Children.Add(new GeometryDrawing(brush, null, Geometry.Parse(data)));
+                Drawing drawing = new GeometryDrawing(brush, null, Geometry.Parse(data));
+                Matrix? transform = ParseTransform(pathElement.Attribute("transform")?.Value);
+                if (transform is Matrix matrix)
+                {
+                    drawing = new DrawingGroup { Transform = new MatrixTransform(matrix), Children = { drawing } };
+                }
+                group.Children.Add(drawing);
                 pathCount++;
             }
             catch (Exception ex)
@@ -103,5 +121,43 @@ public static class CursorFavicon
         var image = new DrawingImage(group);
         image.Freeze();
         return image;
+    }
+
+    private static Brush ResolveFill(string fill, Dictionary<string, Color> gradientColors)
+    {
+        Match urlMatch = Regex.Match(fill, @"^url\(#(.+)\)$");
+        if (urlMatch.Success)
+        {
+            return gradientColors.TryGetValue(urlMatch.Groups[1].Value, out Color gradientColor) ? new SolidColorBrush(gradientColor) : Brushes.Gray;
+        }
+        try
+        {
+            return new SolidColorBrush((Color)ColorConverter.ConvertFromString(fill));
+        }
+        catch
+        {
+            return Brushes.Gray;
+        }
+    }
+
+    private static Matrix? ParseTransform(string? value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return null;
+        }
+        Match match = Regex.Match(value, @"^\s*(matrix|translate|scale)\(([^)]+)\)\s*$");
+        if (!match.Success)
+        {
+            return null;
+        }
+        double[] args = match.Groups[2].Value.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries).Select(double.Parse).ToArray();
+        return match.Groups[1].Value switch
+        {
+            "matrix" when args.Length == 6 => new Matrix(args[0], args[1], args[2], args[3], args[4], args[5]),
+            "translate" when args.Length >= 1 => new Matrix(1, 0, 0, 1, args[0], args.Length > 1 ? args[1] : 0),
+            "scale" when args.Length >= 1 => new Matrix(args[0], 0, 0, args.Length > 1 ? args[1] : args[0], 0, 0),
+            _ => null,
+        };
     }
 }

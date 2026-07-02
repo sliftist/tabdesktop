@@ -18,6 +18,9 @@ public partial class MainWindow : Window
     // A window joins a group when the intersection covers this fraction of the smaller of the two rects — min (not union) so a small window sitting on top of a big one still counts as "mostly overlapping".
     private const double GroupOverlapThreshold = 0.5;
     private static readonly TimeSpan PreviewMaxAge = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan TitleChangeCaptureMinInterval = TimeSpan.FromSeconds(5);
+    // Expanded browser-tab entries slot between their parent and the next real window without disturbing persisted order keys.
+    private const double BrowserTabOrderStep = 0.001;
 
     private readonly ObservableCollection<WindowEntry> windows = new();
     private readonly ObservableCollection<WindowGroup> groups = new();
@@ -29,6 +32,11 @@ public partial class MainWindow : Window
     private double lastAssignedOrder;
     private bool tabOrderDirty;
     private readonly Dictionary<IntPtr, WindowEntry> entriesByHwnd = new();
+    private readonly HashSet<IntPtr> pendingTitleCaptures = new();
+    // Pseudo-entries for expanded browser windows, cached per (hwnd, tab id) so per-tab state — most importantly the screenshot captured while that tab was selected — survives refreshes and tab switches.
+    private readonly Dictionary<(IntPtr Hwnd, int TabId), WindowEntry> browserTabEntries = new();
+    // Once a window has matched an extension window id, remember it: during a tab switch the window title and the reported active tab briefly disagree, and without this the expansion would flicker closed.
+    private readonly Dictionary<IntPtr, int> browserWindowIdByHwnd = new();
     private readonly ProcessWorkerPool workerPool = new();
     private readonly DispatcherTimer refreshTimer;
 
@@ -42,6 +50,21 @@ public partial class MainWindow : Window
 
         WindowList.ItemsSource = windows;
         LayoutItems.ItemsSource = groups;
+        LogList.ItemsSource = AppLog.Entries;
+        // Extension reports and whitelist toggles happen off the UI thread; re-raise the derived bindings so tabs pick up new thumbnails and toggle states.
+        Action refreshDerived = () => Dispatcher.BeginInvoke(() =>
+        {
+            foreach (WindowEntry entry in windows)
+            {
+                entry.RefreshDerived();
+            }
+            foreach (WindowEntry entry in browserTabEntries.Values)
+            {
+                entry.RefreshDerived();
+            }
+        });
+        ExtensionThumbnails.Updated += refreshDerived;
+        ThumbnailWhitelist.Changed += refreshDerived;
         refreshTimer = new DispatcherTimer { Interval = RefreshInterval };
         refreshTimer.Tick += (_, _) => RefreshWindows();
         refreshTimer.Start();
@@ -68,8 +91,15 @@ public partial class MainWindow : Window
         {
             if (!present.Contains(windows[i].Hwnd))
             {
-                entriesByHwnd.Remove(windows[i].Hwnd);
-                previewCapturedAt.Remove(windows[i].Hwnd);
+                IntPtr gone = windows[i].Hwnd;
+                entriesByHwnd.Remove(gone);
+                previewCapturedAt.Remove(gone);
+                pendingTitleCaptures.Remove(gone);
+                browserWindowIdByHwnd.Remove(gone);
+                foreach ((IntPtr Hwnd, int TabId) key in browserTabEntries.Keys.Where(k => k.Hwnd == gone).ToList())
+                {
+                    browserTabEntries.Remove(key);
+                }
                 windows.RemoveAt(i);
             }
         }
@@ -80,12 +110,17 @@ public partial class MainWindow : Window
             (IntPtr hwnd, uint pid, _) = candidates[i];
             if (!entriesByHwnd.TryGetValue(hwnd, out WindowEntry? entry))
             {
-                entry = new WindowEntry { Hwnd = hwnd, Pid = pid, Title = LoadingTitle };
+                entry = new WindowEntry { Hwnd = hwnd, Pid = pid, Title = LoadingTitle, ExePath = ProcessDirectory.GetExecutablePath(pid) };
+                entry.ExpandTabs = ExpandedTabWindows.Contains(hwnd);
+                ExpandedTabWindows.MarkSeen(hwnd);
                 entriesByHwnd[hwnd] = entry;
                 windows.Add(entry);
             }
             entry.ZIndex = candidates.Count - i;
         }
+
+        ApplyDirectoryTitles();
+        ExpandedTabWindows.PurgeUnseen();
 
         var livePids = new HashSet<uint>(candidates.Select(c => c.Pid));
         workerPool.PruneExcept(livePids);
@@ -102,18 +137,32 @@ public partial class MainWindow : Window
         }
         ApplyResults(cheapResults);
 
-        // Previews are captured only for the foreground window, and only when focus just switched to it or its cached preview has gone stale — a focused window is the one whose content is changing, and everything else keeps its last-focused snapshot.
+        // Previews are captured for the foreground window when focus just switched to it or its cached preview has gone stale (a focused window is the one whose content is changing), plus any screenshot-whitelisted window whose title changed — a new title usually means new content (next video/track), throttled via TitleChangeCaptureMinInterval.
         IntPtr foreground = NativeMethods.GetForegroundWindow();
-        IntPtr captureTarget = IntPtr.Zero;
+        var captureTargets = new HashSet<IntPtr>();
         if (entriesByHwnd.ContainsKey(foreground))
         {
             bool stale = !previewCapturedAt.TryGetValue(foreground, out long capturedAt) || Stopwatch.GetElapsedTime(capturedAt) > PreviewMaxAge;
             if (foreground != lastForeground || stale)
             {
-                captureTarget = foreground;
+                captureTargets.Add(foreground);
             }
         }
         lastForeground = foreground;
+        pendingTitleCaptures.RemoveWhere(hwnd =>
+        {
+            if (!entriesByHwnd.ContainsKey(hwnd))
+            {
+                return true;
+            }
+            bool throttled = previewCapturedAt.TryGetValue(hwnd, out long at) && Stopwatch.GetElapsedTime(at) < TitleChangeCaptureMinInterval;
+            if (throttled)
+            {
+                return false;
+            }
+            captureTargets.Add(hwnd);
+            return true;
+        });
 
         foreach (WindowEntry entry in windows)
         {
@@ -128,14 +177,13 @@ public partial class MainWindow : Window
         {
             uint pid = group.Key;
             IntPtr[] hwnds = group.Select(c => c.Hwnd).ToArray();
-            IntPtr pidCaptureTarget = hwnds.Contains(captureTarget) ? captureTarget : IntPtr.Zero;
             string description = $"{hwnds.Length} window(s): {string.Join(", ", hwnds.Select(h => entriesByHwnd[h].Title))}";
             bool scheduled = workerPool.TrySchedule(pid, description, () =>
             {
                 var results = new List<WindowData>();
                 foreach (IntPtr hwnd in hwnds)
                 {
-                    WindowData? data = WindowScanner.GatherOnWorkerThread(hwnd, hwnd == pidCaptureTarget);
+                    WindowData? data = WindowScanner.GatherOnWorkerThread(hwnd, captureTargets.Contains(hwnd));
                     if (data is not null)
                     {
                         results.Add(data);
@@ -192,7 +240,12 @@ public partial class MainWindow : Window
             {
                 continue;
             }
+            string previousTitle = entry.Title;
             entry.Title = data.Title;
+            if (previousTitle != data.Title && previousTitle != LoadingTitle && ThumbnailWhitelist.IsScreenshotExe(entry.ExePath))
+            {
+                pendingTitleCaptures.Add(data.Hwnd);
+            }
             entry.PositionText = $"{data.Left}, {data.Top}";
             entry.SizeText = $"{data.Width} × {data.Height}";
             entry.Status = data.IsMinimized ? "Minimized" : "OK";
@@ -244,9 +297,22 @@ public partial class MainWindow : Window
         {
             List<WindowEntry> ordered = members.OrderBy(EnsureOrder).ThenByDescending(m => m.ZIndex).ToList();
             WindowEntry? lastFocused = ordered.Where(m => m.LastFocusedAt != 0).OrderByDescending(m => m.LastFocusedAt).FirstOrDefault();
+            var display = new List<WindowEntry>();
             foreach (WindowEntry member in ordered)
             {
                 member.IsGroupLastFocused = member == lastFocused;
+                List<BrowserTab>? tabs = null;
+                if (member.ExpandTabs)
+                {
+                    tabs = ExtensionThumbnails.TryGetTabsForWindow(member.Title) ?? (browserWindowIdByHwnd.TryGetValue(member.Hwnd, out int knownId) ? ExtensionThumbnails.TryGetTabsByWindowId(knownId) : null);
+                }
+                if (tabs is null || tabs.Count == 0)
+                {
+                    display.Add(member);
+                    continue;
+                }
+                browserWindowIdByHwnd[member.Hwnd] = tabs[0].WindowId;
+                display.AddRange(BuildBrowserTabEntries(member, tabs));
             }
             groups.Add(new WindowGroup
             {
@@ -256,8 +322,8 @@ public partial class MainWindow : Window
                 ScreenTop = bounds.Y + screenTop,
                 Width = bounds.Width,
                 Height = bounds.Height,
-                CountText = ordered.Count.ToString(),
-                Members = ordered,
+                CountText = display.Count.ToString(),
+                Members = display,
                 ZIndex = ordered.Max(m => m.ZIndex),
             });
         }
@@ -268,6 +334,52 @@ public partial class MainWindow : Window
         }
 
         SyncTabStrips();
+    }
+
+    private List<WindowEntry> BuildBrowserTabEntries(WindowEntry parent, List<BrowserTab> tabs)
+    {
+        // The composed title ("Tab Title - Brave") lets every existing title-keyed pipeline — favicons, extension thumbnails, YouTube, title rules — work on tab entries unchanged.
+        string suffix = BrowserFavicon.GetBrowserSuffix(parent.Title) ?? "";
+        var result = new List<WindowEntry>();
+        var live = new HashSet<(IntPtr, int)>();
+        for (int i = 0; i < tabs.Count; i++)
+        {
+            BrowserTab tab = tabs[i];
+            (IntPtr, int) key = (parent.Hwnd, tab.Id);
+            live.Add(key);
+            if (!browserTabEntries.TryGetValue(key, out WindowEntry? entry))
+            {
+                entry = new WindowEntry { Hwnd = parent.Hwnd, Pid = parent.Pid, ExePath = parent.ExePath };
+                browserTabEntries[key] = entry;
+            }
+            entry.BrowserTab = tab;
+            // Mirrors the parent's expanded state so the popup's expand icon shows lit on tab entries.
+            entry.ExpandTabs = true;
+            entry.Title = tab.Title + suffix;
+            entry.OrderKey = parent.OrderKey + (i + 1) * BrowserTabOrderStep;
+            entry.IsForeground = parent.IsForeground && tab.Active;
+            entry.IsGroupLastFocused = parent.IsGroupLastFocused && tab.Active;
+            // The window screenshot can only ever show the selected tab, so it's assigned to (and cached on) the active tab's entry alone; inactive tabs keep the shot from when they were last selected.
+            if (tab.Active && parent.Thumbnail is not null)
+            {
+                entry.Thumbnail = parent.Thumbnail;
+            }
+            result.Add(entry);
+        }
+        foreach ((IntPtr, int) key in browserTabEntries.Keys.Where(k => k.Hwnd == parent.Hwnd && !live.Contains(k)).ToList())
+        {
+            browserTabEntries.Remove(key);
+        }
+        return result;
+    }
+
+    // Toggling from a tab pseudo-entry routes to the real window entry it belongs to.
+    private void ToggleExpandTabs(WindowEntry entry)
+    {
+        WindowEntry target = entry.BrowserTab is not null && entriesByHwnd.TryGetValue(entry.Hwnd, out WindowEntry? parent) ? parent : entry;
+        target.ExpandTabs = !target.ExpandTabs;
+        ExpandedTabWindows.Set(target.Hwnd, target.ExpandTabs);
+        RecomputeGroups();
     }
 
     private double EnsureOrder(WindowEntry entry)
@@ -292,6 +404,48 @@ public partial class MainWindow : Window
         tabOrder[entry.DisplayTitle] = assigned;
         tabOrderDirty = true;
         return assigned;
+    }
+
+    // Re-resolved on every refresh (not just on toggle) so the shown directory tracks the process as it changes its working directory.
+    private void ApplyDirectoryTitles()
+    {
+        Dictionary<uint, List<uint>>? childrenByParent = null;
+        Dictionary<IntPtr, HashSet<uint>>? tabShellsByWindow = null;
+        // Trees are cached by their root pid: the window's own process for ordinary apps, or each conpty shell for terminal windows. The shells must be walked as roots in their own right — with the default-terminal handoff they're frequently not process-children of the terminal at all.
+        var treesByRoot = new Dictionary<uint, List<ProcessDirectory.TreeDirectory>>();
+        List<ProcessDirectory.TreeDirectory> GetTree(uint rootPid)
+        {
+            if (!treesByRoot.TryGetValue(rootPid, out List<ProcessDirectory.TreeDirectory>? tree))
+            {
+                childrenByParent ??= ProcessDirectory.SnapshotChildren();
+                tree = ProcessDirectory.GetTreeDirectories(rootPid, childrenByParent);
+                treesByRoot[rootPid] = tree;
+            }
+            return tree;
+        }
+        foreach (WindowEntry entry in windows)
+        {
+            if (!DirectoryTitles.IsEnabled(entry.ExePath))
+            {
+                entry.DirectoryTitle = null;
+                continue;
+            }
+            tabShellsByWindow ??= ProcessDirectory.SnapshotTabShells();
+            List<ProcessDirectory.TreeDirectory> tree = tabShellsByWindow.TryGetValue(entry.Hwnd, out HashSet<uint>? windowTabShells)
+                ? windowTabShells.SelectMany(GetTree).ToList()
+                : GetTree(entry.Pid);
+            entry.DirectoryTitle = ProcessDirectory.ChooseBestDirectory(tree, entry.Title) ?? ProcessDirectory.GetCurrentDirectory(entry.Pid) ?? Path.GetDirectoryName(entry.ExePath);
+        }
+    }
+
+    private void ToggleDirectoryTitle(WindowEntry entry)
+    {
+        if (entry.ExePath is null)
+        {
+            return;
+        }
+        DirectoryTitles.Toggle(entry.ExePath);
+        ApplyDirectoryTitles();
     }
 
     private void ReorderTab(WindowEntry entry, double newKey)
@@ -349,7 +503,7 @@ public partial class MainWindow : Window
             }
             if (best is null)
             {
-                best = new TabStripWindow(FocusWindow, ReorderTab, ShowMainWindow);
+                best = new TabStripWindow(FocusWindow, ReorderTab, ShowMainWindow, ToggleDirectoryTitle, ToggleExpandTabs);
                 tabStrips.Add(best);
                 best.Update(group, dpiScale);
                 best.Show();

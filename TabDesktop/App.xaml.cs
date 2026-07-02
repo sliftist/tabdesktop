@@ -1,13 +1,21 @@
-﻿using System.Configuration;
-using System.Data;
 using System.Windows;
 
 namespace TabDesktop;
 
-/// <summary>
-/// Interaction logic for App.xaml
-/// </summary>
 public partial class App : Application
 {
+    protected override void OnStartup(StartupEventArgs e)
+    {
+        AppLog.Install();
+        ExtensionThumbnails.Start();
+        try
+        {
+            ExtensionInstaller.EnsureDeployed();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(nameof(ExtensionInstaller), ex.ToString());
+        }
+        base.OnStartup(e);
+    }
 }
-

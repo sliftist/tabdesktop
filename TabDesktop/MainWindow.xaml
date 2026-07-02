@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:TabDesktop"
         mc:Ignorable="d"
-        Title="TabDesktop" Height="700" Width="1100">
+        Title="TabDesktop" Height="700" Width="1100" ShowActivated="False">
     <TabControl>
         <TabItem Header="Layout">
             <Viewbox Stretch="Uniform">
@@ -89,6 +89,26 @@
                                 <GridViewColumn.CellTemplate>
                                     <DataTemplate>
                                         <local:MiddleEllipsisTextBlock FullText="{Binding Poll}" VerticalAlignment="Center" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </DockPanel>
+        </TabItem>
+        <TabItem Header="Log">
+            <DockPanel>
+                <TextBox DockPanel.Dock="Bottom" Height="160" IsReadOnly="True" FontFamily="Consolas" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" Text="{Binding SelectedItem.Message, ElementName=LogList, Mode=OneWay}" />
+                <ListView x:Name="LogList">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Time" Width="80" DisplayMemberBinding="{Binding TimeText}" />
+                            <GridViewColumn Header="Source" Width="140" DisplayMemberBinding="{Binding Source}" />
+                            <GridViewColumn Header="Message" Width="720">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <local:MiddleEllipsisTextBlock FullText="{Binding FirstLine}" VerticalAlignment="Center" />
                                     </DataTemplate>
                                 </GridViewColumn.CellTemplate>
                             </GridViewColumn>

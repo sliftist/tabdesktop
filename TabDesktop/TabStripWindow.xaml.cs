@@ -1,7 +1,10 @@
+using System.Diagnostics;
+using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using TabDesktop.Interop;
 
 namespace TabDesktop;
@@ -9,33 +12,45 @@ namespace TabDesktop;
 // One strip per multi-window group, floating just above the group's screen rect. Deliberately a separate small window per group (not one full-screen overlay): the strip only owns the pixels of its own bar, so it can take clicks on tabs without intercepting mouse events anywhere else on the desktop.
 public partial class TabStripWindow : Window
 {
-    private const double HeaderWidth = 32;
-    // Tab Border width plus its horizontal margins; used to size the window and as the wheel/button scroll step.
-    private const double TabOuterWidth = 202;
+    private const double HeaderWidth = 64;
+    private const double StripHeight = 68;
+    // Tab Border outer width (border included, no margins); used as the wheel/button scroll step.
+    private const double TabOuterWidth = 200;
     private const double ScrollButtonsWidth = 44;
     private const double ScrollStep = TabOuterWidth * 2;
     private const double DragThreshold = 6;
+    // A dark-green chip keeps the emoji readable on top while still reading as clearly "on" from across the screen.
+    private static readonly Brush ExtensionConnectedBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0x7D, 0x32));
+    private const double DisconnectedIconOpacity = 0.4;
 
     private readonly Action<IntPtr> focusRequested;
     private readonly Action<WindowEntry, double> reorderRequested;
     private readonly Action showMainRequested;
+    private readonly Action<WindowEntry> directoryTitleToggleRequested;
+    private readonly Action<WindowEntry> expandTabsToggleRequested;
     private WindowGroup? currentGroup;
     private WindowGroup? pendingGroup;
     private double currentDpiScale = 1;
     private bool collapsed;
+    private bool doubleHeight;
     private WindowEntry? dragEntry;
     private Border? dragBorder;
     private Point dragStart;
     private bool dragging;
+    private ExtensionInstallWindow? installWindow;
 
     public HashSet<IntPtr> MemberHwnds { get; private set; } = new();
 
-    public TabStripWindow(Action<IntPtr> focusRequested, Action<WindowEntry, double> reorderRequested, Action showMainRequested)
+    public TabStripWindow(Action<IntPtr> focusRequested, Action<WindowEntry, double> reorderRequested, Action showMainRequested, Action<WindowEntry> directoryTitleToggleRequested, Action<WindowEntry> expandTabsToggleRequested)
     {
         this.focusRequested = focusRequested;
         this.reorderRequested = reorderRequested;
         this.showMainRequested = showMainRequested;
+        this.directoryTitleToggleRequested = directoryTitleToggleRequested;
+        this.expandTabsToggleRequested = expandTabsToggleRequested;
         InitializeComponent();
+        Height = StripHeight;
+        TabActionsPopup.Closed += (_, _) => ApplyPendingGroup();
         // Tool-window ex-style keeps the strip out of alt-tab and out of our own scanner's candidate filter, so strips never form groups over themselves.
         SourceInitialized += (_, _) =>
         {
@@ -48,8 +63,9 @@ public partial class TabStripWindow : Window
     // dpiScale converts the scanner's physical pixels to WPF's device-independent units; on mixed-DPI setups this is only exact on monitors matching the system DPI.
     public void Update(WindowGroup group, double dpiScale)
     {
-        // Replacing ItemsSource mid-drag regenerates the tab containers, which kills the captured Border and strands the drag; defer refreshes until the drag ends.
-        if (dragEntry is not null)
+        UpdateExtensionIndicator();
+        // Replacing ItemsSource regenerates the tab containers, which kills the captured Border mid-drag (stranding the drag) and yanks the action popup's placement target; defer refreshes until the drag ends or the popup closes.
+        if (dragEntry is not null || TabActionsPopup.IsOpen)
         {
             pendingGroup = group;
             currentDpiScale = dpiScale;
@@ -69,9 +85,11 @@ public partial class TabStripWindow : Window
         {
             return;
         }
+        Height = doubleHeight ? StripHeight * 2 : StripHeight;
         Left = currentGroup.ScreenLeft / currentDpiScale;
         Top = Math.Max(SystemParameters.VirtualScreenTop, currentGroup.ScreenTop / currentDpiScale - Height);
         ToggleButton.Content = collapsed ? "»" : "«";
+        HeightButton.Content = doubleHeight ? "⇓" : "⇑";
         if (collapsed)
         {
             TabsScroll.Visibility = Visibility.Collapsed;
@@ -96,9 +114,53 @@ public partial class TabStripWindow : Window
         ApplyLayout();
     }
 
+    private void OnToggleDoubleHeight(object sender, RoutedEventArgs e)
+    {
+        doubleHeight = !doubleHeight;
+        ApplyLayout();
+    }
+
     private void OnShowMain(object sender, RoutedEventArgs e)
     {
         showMainRequested();
+    }
+
+    // Launches the batch file that ships beside the exe; it kills this process, rebuilds, and starts the new build — the cmd child survives its parent being killed.
+    private void OnRebuildRestart(object sender, RoutedEventArgs e)
+    {
+        string batPath = Path.Combine(AppContext.BaseDirectory, "build-and-run.bat");
+        if (!File.Exists(batPath))
+        {
+            Trace.WriteLine($"build-and-run.bat not found at {batPath}");
+            return;
+        }
+        Process.Start(new ProcessStartInfo(batPath) { UseShellExecute = true, WorkingDirectory = AppContext.BaseDirectory });
+    }
+
+    // Rides the regular refresh cycle, so the indicator also dims again when the extension stops reporting (browser closed, extension removed).
+    private void UpdateExtensionIndicator()
+    {
+        bool connected = ExtensionThumbnails.IsConnected;
+        ExtensionIcon.Opacity = connected ? 1.0 : DisconnectedIconOpacity;
+        ExtensionIconChip.Background = connected ? ExtensionConnectedBrush : Brushes.Transparent;
+        ExtensionButton.ToolTip = connected
+            ? "Browser extension connected and reporting — click for install info"
+            : "Install the browser extension — video thumbnails straight from your tabs, including logged-in sites";
+    }
+
+    // Non-modal on purpose: the app spans every monitor, so a blocking dialog would lock out the whole desktop's strips.
+    private void OnInstallExtension(object sender, RoutedEventArgs e)
+    {
+        if (installWindow is null)
+        {
+            installWindow = new ExtensionInstallWindow();
+            installWindow.Closed += (_, _) => installWindow = null;
+            installWindow.Show();
+        }
+        else
+        {
+            installWindow.Activate();
+        }
     }
 
     private void OnScrollLeft(object sender, RoutedEventArgs e)
@@ -115,6 +177,51 @@ public partial class TabStripWindow : Window
     {
         TabsScroll.ScrollToHorizontalOffset(TabsScroll.HorizontalOffset - Math.Sign(e.Delta) * TabOuterWidth);
         e.Handled = true;
+    }
+
+    // Right-click opens the action popup above the tab. The toggle button reads its entry from the popup's DataContext, so state (filled vs outline folder) follows the entry's DirectoryTitle binding live.
+    private void OnTabRightButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border border || border.DataContext is not WindowEntry entry)
+        {
+            return;
+        }
+        TabActionsPopup.DataContext = entry;
+        TabActionsPopup.PlacementTarget = border;
+        TabActionsPopup.IsOpen = true;
+        e.Handled = true;
+    }
+
+    private void OnToggleFolderTitle(object sender, RoutedEventArgs e)
+    {
+        if (TabActionsPopup.DataContext is WindowEntry entry)
+        {
+            directoryTitleToggleRequested(entry);
+        }
+    }
+
+    private void OnToggleVideoThumbnail(object sender, RoutedEventArgs e)
+    {
+        if (TabActionsPopup.DataContext is WindowEntry entry)
+        {
+            ThumbnailWhitelist.ToggleDomainForWindow(entry.Title);
+        }
+    }
+
+    private void OnToggleScreenshotThumbnail(object sender, RoutedEventArgs e)
+    {
+        if (TabActionsPopup.DataContext is WindowEntry entry && entry.ExePath is not null)
+        {
+            ThumbnailWhitelist.ToggleScreenshotExe(entry.ExePath);
+        }
+    }
+
+    private void OnToggleExpandTabs(object sender, RoutedEventArgs e)
+    {
+        if (TabActionsPopup.DataContext is WindowEntry entry)
+        {
+            expandTabsToggleRequested(entry);
+        }
     }
 
     private void OnTabMouseDown(object sender, MouseButtonEventArgs e)
@@ -161,13 +268,18 @@ public partial class TabStripWindow : Window
         if (!wasDragging)
         {
             ApplyPendingGroup();
+            if (entry.BrowserTab is not null)
+            {
+                ExtensionThumbnails.ActivateTab(entry.BrowserTab);
+            }
             focusRequested(entry.Hwnd);
             return;
         }
         // Compute the drop before applying any deferred group update — it reads the tab containers the drag happened over.
         double newKey = ComputeDropKey(e.GetPosition(Tabs), entry);
         ApplyPendingGroup();
-        if (newKey != entry.OrderKey)
+        // Browser-tab pseudo-entries can't be reordered from here — their order is the browser's own tab order.
+        if (entry.BrowserTab is null && newKey != entry.OrderKey)
         {
             reorderRequested(entry, newKey);
         }
