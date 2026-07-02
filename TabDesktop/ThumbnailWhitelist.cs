@@ -13,6 +13,8 @@ public static class ThumbnailWhitelist
     private static readonly object gate = new();
     private static readonly HashSet<string> domains = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> screenshotExes = new(StringComparer.OrdinalIgnoreCase);
+    // Screenshot opt-in for browser tabs is per-domain — whitelisting the browser exe would drag every site along.
+    private static readonly HashSet<string> screenshotDomains = new(StringComparer.OrdinalIgnoreCase);
 
     public static event Action? Changed;
 
@@ -30,6 +32,7 @@ public static class ThumbnailWhitelist
             Config config = JsonSerializer.Deserialize<Config>(File.ReadAllText(ConfigPath), options) ?? new Config();
             domains.UnionWith(config.Domains);
             screenshotExes.UnionWith(config.ScreenshotExes);
+            screenshotDomains.UnionWith(config.ScreenshotDomains);
         }
         catch (Exception ex)
         {
@@ -59,6 +62,48 @@ public static class ThumbnailWhitelist
         {
             return screenshotExes.Contains(exePath);
         }
+    }
+
+    public static bool IsScreenshotDomainWhitelisted(string? host)
+    {
+        if (host is null)
+        {
+            return false;
+        }
+        lock (gate)
+        {
+            return screenshotDomains.Contains(host);
+        }
+    }
+
+    public static void ToggleScreenshotForWindow(string windowTitle)
+    {
+        Task.Run(() =>
+        {
+            string? host = null;
+            try
+            {
+                host = TabDomains.Resolve(windowTitle);
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write(nameof(ThumbnailWhitelist), ex.ToString());
+            }
+            if (host is null)
+            {
+                AppLog.Write(nameof(ThumbnailWhitelist), $"Could not determine the domain for \"{windowTitle}\" — no extension report and no History match yet.");
+                return;
+            }
+            lock (gate)
+            {
+                if (!screenshotDomains.Add(host))
+                {
+                    screenshotDomains.Remove(host);
+                }
+                Save();
+            }
+            Changed?.Invoke();
+        });
     }
 
     // Resolving the tab's domain may need a browser History query, so the toggle runs off-thread.
@@ -114,7 +159,7 @@ public static class ThumbnailWhitelist
     {
         try
         {
-            var config = new Config { Domains = domains.ToList(), ScreenshotExes = screenshotExes.ToList() };
+            var config = new Config { Domains = domains.ToList(), ScreenshotExes = screenshotExes.ToList(), ScreenshotDomains = screenshotDomains.ToList() };
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
             File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -128,5 +173,6 @@ public static class ThumbnailWhitelist
     {
         public List<string> Domains { get; set; } = new();
         public List<string> ScreenshotExes { get; set; } = new();
+        public List<string> ScreenshotDomains { get; set; } = new();
     }
 }

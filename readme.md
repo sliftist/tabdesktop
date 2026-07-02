@@ -1,6 +1,6 @@
 # TabDesktop
 
-**[Download here](https://github.com/sliftist/tabdesktop/releases/latest)**
+**Download:** https://github.com/sliftist/tabdesktop/releases/latest
 
 Browser-style tab strips for your Windows desktop. TabDesktop shows a strip at the top of each monitor listing your open windows as tabs — with icons, favicons, and live thumbnails — so you can see and switch between everything at a glance.
 
@@ -15,13 +15,13 @@ Browser-style tab strips for your Windows desktop. TabDesktop shows a strip at t
 
 ## Installing
 
-Download the latest release from the [releases page](https://github.com/sliftist/tabdesktop/releases/latest) and run it.
+Download the latest release and run it: https://github.com/sliftist/tabdesktop/releases/latest
 
 ## Development
 
-1. Install the [.NET 10 SDK](https://dotnet.microsoft.com/download)
-2. Install [Node.js](https://nodejs.org/)
-3. Install [Yarn](https://yarnpkg.com/): `npm install -g yarn`
+1. Install the .NET 10 SDK: https://dotnet.microsoft.com/download
+2. Install Node.js: https://nodejs.org/
+3. Install Yarn (https://yarnpkg.com/): `npm install -g yarn`
 4. `git clone https://github.com/sliftist/tabdesktop.git`
 5. `cd tabdesktop`
 6. `yarn start`

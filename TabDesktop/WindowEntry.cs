@@ -58,7 +58,8 @@ public sealed class WindowEntry : INotifyPropertyChanged
 
     public bool IsVideoThumbnailEnabled => ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.TryGet(title, NotifyIconResolved));
 
-    public bool IsScreenshotThumbnailEnabled => ThumbnailWhitelist.IsScreenshotExe(ExePath);
+    // Browser tabs opt into screenshots per site domain; everything else per process executable.
+    public bool IsScreenshotThumbnailEnabled => IsBrowserTab ? ThumbnailWhitelist.IsScreenshotDomainWhitelisted(TabDomains.TryGet(title, NotifyIconResolved)) : ThumbnailWhitelist.IsScreenshotExe(ExePath);
 
     // The video thumbnail supersedes the small favicon (which would just be the YouTube logo next to the video's own image).
     public ImageSource? IconImage => VideoThumbnail is not null ? null : BrowserFavicon.TryGet(title, NotifyIconResolved) ?? CursorFavicon.TryGet(title) ?? TitleRules.GetIcon(title) ?? WindowIcon.TryGet(Hwnd, Pid, NotifyIconResolved);
@@ -71,6 +72,7 @@ public sealed class WindowEntry : INotifyPropertyChanged
             Raise(nameof(VideoThumbnail));
             Raise(nameof(IconImage));
             Raise(nameof(IsVideoThumbnailEnabled));
+            Raise(nameof(IsScreenshotThumbnailEnabled));
         });
     }
 

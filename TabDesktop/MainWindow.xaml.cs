@@ -255,7 +255,7 @@ public partial class MainWindow : Window
             }
             string previousTitle = entry.Title;
             entry.Title = data.Title;
-            if (previousTitle != data.Title && previousTitle != LoadingTitle && ThumbnailWhitelist.IsScreenshotExe(entry.ExePath))
+            if (previousTitle != data.Title && previousTitle != LoadingTitle && entry.IsScreenshotThumbnailEnabled)
             {
                 pendingTitleCaptures.Add(data.Hwnd);
             }

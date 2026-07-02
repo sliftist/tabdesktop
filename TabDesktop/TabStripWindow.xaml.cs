@@ -210,7 +210,15 @@ public partial class TabStripWindow : Window
 
     private void OnToggleScreenshotThumbnail(object sender, RoutedEventArgs e)
     {
-        if (TabActionsPopup.DataContext is WindowEntry entry && entry.ExePath is not null)
+        if (TabActionsPopup.DataContext is not WindowEntry entry)
+        {
+            return;
+        }
+        if (entry.IsBrowserTab)
+        {
+            ThumbnailWhitelist.ToggleScreenshotForWindow(entry.Title);
+        }
+        else if (entry.ExePath is not null)
         {
             ThumbnailWhitelist.ToggleScreenshotExe(entry.ExePath);
         }
