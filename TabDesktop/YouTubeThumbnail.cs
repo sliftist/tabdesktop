@@ -20,14 +20,8 @@ public static class YouTubeThumbnail
     private static readonly Dictionary<string, ImageSource?> resolvedByPageTitle = new();
     private static readonly HashSet<string> pending = new();
 
-    private const string YouTubeHost = "youtube.com";
-
     public static ImageSource? TryGet(string title, Action onResolved)
     {
-        if (!ThumbnailWhitelist.IsDomainWhitelisted(YouTubeHost))
-        {
-            return null;
-        }
         string? pageTitle = BrowserFavicon.GetPageTitle(title);
         if (pageTitle is null || !pageTitle.EndsWith(PageTitleSuffix, StringComparison.Ordinal))
         {

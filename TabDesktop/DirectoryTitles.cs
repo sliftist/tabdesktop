@@ -16,6 +16,11 @@ public static class DirectoryTitles
         return exePath is not null && exePaths.Contains(exePath);
     }
 
+    public static List<string> GetEnabled()
+    {
+        return exePaths.OrderBy(p => p).ToList();
+    }
+
     public static void Toggle(string exePath)
     {
         if (!exePaths.Remove(exePath))

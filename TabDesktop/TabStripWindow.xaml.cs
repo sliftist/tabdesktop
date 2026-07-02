@@ -12,14 +12,14 @@ namespace TabDesktop;
 // One strip per multi-window group, floating just above the group's screen rect. Deliberately a separate small window per group (not one full-screen overlay): the strip only owns the pixels of its own bar, so it can take clicks on tabs without intercepting mouse events anywhere else on the desktop.
 public partial class TabStripWindow : Window
 {
-    private const double HeaderWidth = 64;
+    private const double ButtonColumnWidth = 32;
     private const double StripHeight = 68;
     // Tab Border outer width (border included, no margins); used as the wheel/button scroll step.
     private const double TabOuterWidth = 200;
     private const double ScrollButtonsWidth = 44;
     private const double ScrollStep = TabOuterWidth * 2;
     private const double DragThreshold = 6;
-    // A dark-green chip keeps the emoji readable on top while still reading as clearly "on" from across the screen.
+    // A dark-green chip keeps the puzzle icon readable on top while still reading as clearly "on" from across the screen.
     private static readonly Brush ExtensionConnectedBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0x7D, 0x32));
     private const double DisconnectedIconOpacity = 0.4;
 
@@ -73,6 +73,13 @@ public partial class TabStripWindow : Window
         }
         currentGroup = group;
         currentDpiScale = dpiScale;
+        // Reapplying the persisted state on every update is idempotent: toggles save immediately, so the lookup always agrees with the user's latest choice for this region.
+        (bool Collapsed, bool DoubleHeight)? savedState = TabStripStates.TryGet(GroupBounds(group));
+        if (savedState is not null)
+        {
+            collapsed = savedState.Value.Collapsed;
+            doubleHeight = savedState.Value.DoubleHeight;
+        }
         MemberHwnds = group.Members.Select(m => m.Hwnd).ToHashSet();
         Tabs.ItemsSource = group.Members;
         CountText.Text = group.Members.Count.ToString();
@@ -85,6 +92,11 @@ public partial class TabStripWindow : Window
         {
             return;
         }
+        // Basic mode shows only the count/collapse/home column; every other strip button lives in the advanced column, and future buttons must too.
+        bool advanced = AppSettings.AdvancedMode;
+        AdvancedButtons.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
+        double headerWidth = advanced ? 2 * ButtonColumnWidth : ButtonColumnWidth;
+        HeaderBorder.Width = headerWidth;
         Height = doubleHeight ? StripHeight * 2 : StripHeight;
         Left = currentGroup.ScreenLeft / currentDpiScale;
         Top = Math.Max(SystemParameters.VirtualScreenTop, currentGroup.ScreenTop / currentDpiScale - Height);
@@ -94,7 +106,7 @@ public partial class TabStripWindow : Window
         {
             TabsScroll.Visibility = Visibility.Collapsed;
             ScrollButtons.Visibility = Visibility.Collapsed;
-            Width = HeaderWidth;
+            Width = headerWidth;
             return;
         }
         TabsScroll.Visibility = Visibility.Visible;
@@ -102,22 +114,37 @@ public partial class TabStripWindow : Window
         // Tabs pack into vertical-flow columns of varying height, so the packed width comes from measuring the real panel rather than count × tab width.
         Tabs.Measure(new Size(double.PositiveInfinity, Height));
         double tabsWidth = Tabs.DesiredSize.Width;
-        bool overflow = HeaderWidth + tabsWidth > groupWidth;
+        bool overflow = headerWidth + tabsWidth > groupWidth;
         ScrollButtons.Visibility = overflow ? Visibility.Visible : Visibility.Collapsed;
-        double desired = HeaderWidth + tabsWidth + (overflow ? ScrollButtonsWidth : 0);
-        Width = Math.Min(desired, Math.Max(groupWidth, HeaderWidth + TabOuterWidth + ScrollButtonsWidth));
+        double desired = headerWidth + tabsWidth + (overflow ? ScrollButtonsWidth : 0);
+        Width = Math.Min(desired, Math.Max(groupWidth, headerWidth + TabOuterWidth + ScrollButtonsWidth));
     }
 
     private void OnToggleCollapse(object sender, RoutedEventArgs e)
     {
         collapsed = !collapsed;
+        SaveStripState();
         ApplyLayout();
     }
 
     private void OnToggleDoubleHeight(object sender, RoutedEventArgs e)
     {
         doubleHeight = !doubleHeight;
+        SaveStripState();
         ApplyLayout();
+    }
+
+    private static Rect GroupBounds(WindowGroup group)
+    {
+        return new Rect(group.ScreenLeft, group.ScreenTop, group.Width, group.Height);
+    }
+
+    private void SaveStripState()
+    {
+        if (currentGroup is not null)
+        {
+            TabStripStates.Set(GroupBounds(currentGroup), collapsed, doubleHeight);
+        }
     }
 
     private void OnShowMain(object sender, RoutedEventArgs e)
@@ -126,7 +153,7 @@ public partial class TabStripWindow : Window
     }
 
     // Launches the batch file that ships beside the exe; it kills this process, rebuilds, and starts the new build — the cmd child survives its parent being killed.
-    private void OnRebuildRestart(object sender, RoutedEventArgs e)
+    public static void LaunchRebuildRestart()
     {
         string batPath = Path.Combine(AppContext.BaseDirectory, "build-and-run.bat");
         if (!File.Exists(batPath))
@@ -135,6 +162,11 @@ public partial class TabStripWindow : Window
             return;
         }
         Process.Start(new ProcessStartInfo(batPath) { UseShellExecute = true, WorkingDirectory = AppContext.BaseDirectory });
+    }
+
+    private void OnRebuildRestart(object sender, RoutedEventArgs e)
+    {
+        LaunchRebuildRestart();
     }
 
     // Rides the regular refresh cycle, so the indicator also dims again when the extension stops reporting (browser closed, extension removed).

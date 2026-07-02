@@ -1,8 +1,10 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using TabDesktop.Interop;
@@ -24,11 +26,15 @@ public partial class MainWindow : Window
     private const double MaxIdleTransparency = 0.25;
     // The fade moves imperceptibly slowly, so a coarse recompute cadence is plenty.
     private static readonly TimeSpan IdleFadeRefreshInterval = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan InstallFeedbackDuration = TimeSpan.FromSeconds(1.5);
     // Expanded browser-tab entries slot between their parent and the next real window without disturbing persisted order keys.
     private const double BrowserTabOrderStep = 0.001;
 
     private readonly ObservableCollection<WindowEntry> windows = new();
     private readonly ObservableCollection<WindowGroup> groups = new();
+    // Settings-tab rows persist across refreshes (matched to groups by shared hwnds) so their expanders don't collapse every tick.
+    private readonly ObservableCollection<GroupRow> settingsGroups = new();
+    private ExtensionInstallWindow? installWindow;
     private readonly List<TabStripWindow> tabStrips = new();
     private readonly Dictionary<IntPtr, long> previewCapturedAt = new();
     private IntPtr lastForeground;
@@ -59,6 +65,11 @@ public partial class MainWindow : Window
         WindowList.ItemsSource = windows;
         LayoutItems.ItemsSource = groups;
         LogList.ItemsSource = AppLog.Entries;
+        SettingsGroups.ItemsSource = settingsGroups;
+        AdvancedModeCheck.IsChecked = AppSettings.AdvancedMode;
+        RunOnStartupCheck.IsChecked = Installer.IsAutoStartEnabled();
+        // Strips re-read AdvancedMode inside their layout pass; a full refresh pushes the change to every strip immediately.
+        AppSettings.Changed += () => Dispatcher.BeginInvoke(RefreshWindows);
         // Extension reports and whitelist toggles happen off the UI thread; re-raise the derived bindings so tabs pick up new thumbnails and toggle states.
         Action refreshDerived = () => Dispatcher.BeginInvoke(() =>
         {
@@ -221,6 +232,9 @@ public partial class MainWindow : Window
 
     private void UpdateWorkerTab()
     {
+        ExtensionStatusText.Text = ExtensionThumbnails.IsConnected
+            ? "Connected — the browser extension is reporting. Tab thumbnails, per-tab expansion, and tab switching are available."
+            : "Not connected — no reports from the browser extension. Install it below, or check that the browser is running and the extension is enabled.";
         List<WorkerStatus> statuses = workerPool.SnapshotStatus();
         int stalled = statuses.Count(s => s.State == "Stalled");
         (double pollsPerSecond, double pollMsPerSecond) = workerPool.GetRecentPollRate();
@@ -316,17 +330,12 @@ public partial class MainWindow : Window
             foreach (WindowEntry member in ordered)
             {
                 member.IsGroupLastFocused = member == lastFocused;
-                List<BrowserTab>? tabs = null;
-                if (member.ExpandTabs)
-                {
-                    tabs = ExtensionThumbnails.TryGetTabsForWindow(member.Title) ?? (browserWindowIdByHwnd.TryGetValue(member.Hwnd, out int knownId) ? ExtensionThumbnails.TryGetTabsByWindowId(knownId) : null);
-                }
+                List<BrowserTab>? tabs = member.ExpandTabs ? GetTabsForExpandedWindow(member) : null;
                 if (tabs is null || tabs.Count == 0)
                 {
                     display.Add(member);
                     continue;
                 }
-                browserWindowIdByHwnd[member.Hwnd] = tabs[0].WindowId;
                 expandedTail.AddRange(BuildBrowserTabEntries(member, tabs));
             }
             display.AddRange(expandedTail);
@@ -350,6 +359,273 @@ public partial class MainWindow : Window
         }
 
         SyncTabStrips();
+        SyncSettingsGroups();
+    }
+
+    private void SyncSettingsGroups()
+    {
+        var unmatched = new List<GroupRow>(settingsGroups);
+        foreach (WindowGroup group in groups.Where(g => g.Members.Count >= 2))
+        {
+            var hwnds = group.Members.Select(m => m.Hwnd).ToHashSet();
+            GroupRow? best = null;
+            int bestShared = 0;
+            foreach (GroupRow row in unmatched)
+            {
+                int shared = row.MemberHwnds.Count(hwnds.Contains);
+                if (shared > bestShared)
+                {
+                    bestShared = shared;
+                    best = row;
+                }
+            }
+            if (best is null)
+            {
+                best = new GroupRow();
+                settingsGroups.Add(best);
+            }
+            else
+            {
+                unmatched.Remove(best);
+            }
+            UpdateGroupRow(best, group);
+        }
+        foreach (GroupRow leftover in unmatched)
+        {
+            settingsGroups.Remove(leftover);
+        }
+    }
+
+    private static void UpdateGroupRow(GroupRow row, WindowGroup group)
+    {
+        row.MemberHwnds = group.Members.Select(m => m.Hwnd).ToHashSet();
+        row.Bounds = new Rect(group.ScreenLeft, group.ScreenTop, group.Width, group.Height);
+        row.Header = $"{group.Members.Count} tabs — {group.Width:0}×{group.Height:0} at {group.ScreenLeft:0}, {group.ScreenTop:0}";
+        (bool Collapsed, bool DoubleHeight)? state = TabStripStates.TryGet(row.Bounds);
+        row.SizeButtonText = SizeButtonLabel(state is not null && state.Value.DoubleHeight);
+        List<string> titles = group.Members.Select(m => m.DisplayTitle).ToList();
+        if (!titles.SequenceEqual(row.Titles))
+        {
+            row.Titles = titles;
+        }
+    }
+
+    private static string SizeButtonLabel(bool tall)
+    {
+        return tall ? "Tall — make normal" : "Normal — make tall";
+    }
+
+    private void OnAdvancedModeChanged(object sender, RoutedEventArgs e)
+    {
+        AppSettings.SetAdvancedMode(AdvancedModeCheck.IsChecked ?? false);
+    }
+
+    private void OnRunOnStartupChanged(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Installer.SetAutoStart(RunOnStartupCheck.IsChecked ?? false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(nameof(Installer), ex.ToString());
+        }
+    }
+
+    private void OnInstallApp(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Installer.Install();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(nameof(Installer), ex.ToString());
+            return;
+        }
+        RunOnStartupCheck.IsChecked = true;
+        InstallAppButton.Content = "Installed!";
+        var revert = new DispatcherTimer { Interval = InstallFeedbackDuration };
+        revert.Tick += (_, _) =>
+        {
+            revert.Stop();
+            InstallAppButton.Content = "Install TabDesktop";
+        };
+        revert.Start();
+    }
+
+    private void OnOpenExtensionInstall(object sender, RoutedEventArgs e)
+    {
+        if (installWindow is null)
+        {
+            installWindow = new ExtensionInstallWindow();
+            installWindow.Closed += (_, _) => installWindow = null;
+            installWindow.Show();
+        }
+        else
+        {
+            installWindow.Activate();
+        }
+    }
+
+    private void OnRebuildRestartClick(object sender, RoutedEventArgs e)
+    {
+        TabStripWindow.LaunchRebuildRestart();
+    }
+
+    private void OnToggleGroupSize(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button button || button.DataContext is not GroupRow row)
+        {
+            return;
+        }
+        (bool Collapsed, bool DoubleHeight)? state = TabStripStates.TryGet(row.Bounds);
+        bool collapsed = state is not null && state.Value.Collapsed;
+        bool tall = state is not null && state.Value.DoubleHeight;
+        TabStripStates.Set(row.Bounds, collapsed, !tall);
+        row.SizeButtonText = SizeButtonLabel(!tall);
+        e.Handled = true;
+    }
+
+    private void OnSavedStateExpanded(object sender, RoutedEventArgs e)
+    {
+        RefreshSavedState();
+    }
+
+    private void OnSavedStateSearch(object sender, TextChangedEventArgs e)
+    {
+        RefreshSavedState();
+    }
+
+    private void OnRemoveSavedState(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && button.DataContext is SavedStateRow row)
+        {
+            row.Remove();
+            RefreshSavedState();
+        }
+    }
+
+    private void RefreshSavedState()
+    {
+        string query = SavedStateSearch.Text.Trim();
+        var rows = new List<SavedStateRow>();
+        foreach (string domain in ThumbnailWhitelist.GetDomains())
+        {
+            rows.Add(new SavedStateRow("Video thumbnail domain", domain, () => ThumbnailWhitelist.ToggleDomain(domain)));
+        }
+        foreach (string domain in ThumbnailWhitelist.GetScreenshotDomains())
+        {
+            rows.Add(new SavedStateRow("Screenshot domain", domain, () => ThumbnailWhitelist.ToggleScreenshotDomain(domain)));
+        }
+        foreach (string exe in ThumbnailWhitelist.GetScreenshotExes())
+        {
+            rows.Add(new SavedStateRow("Screenshot program", exe, () => ThumbnailWhitelist.ToggleScreenshotExe(exe)));
+        }
+        foreach (string exe in DirectoryTitles.GetEnabled())
+        {
+            rows.Add(new SavedStateRow("Directory title program", exe, () => DirectoryTitles.Toggle(exe)));
+        }
+        foreach ((long hwnd, int? windowId) in ExpandedTabWindows.GetAll())
+        {
+            string value = $"hwnd {hwnd}" + (windowId is int id ? $" → browser window {id}" : "");
+            rows.Add(new SavedStateRow("Expanded browser window", value, () => ExpandedTabWindows.Set(new IntPtr(hwnd), false)));
+        }
+        if (query.Length > 0)
+        {
+            rows = rows.Where(r => r.Category.Contains(query, StringComparison.OrdinalIgnoreCase) || r.Value.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+        SavedStateList.ItemsSource = rows;
+    }
+
+    private sealed record SavedStateRow(string Category, string Value, Action Remove);
+
+    private sealed class GroupRow : INotifyPropertyChanged
+    {
+        public HashSet<IntPtr> MemberHwnds = new();
+        public Rect Bounds;
+
+        private string header = "";
+        public string Header
+        {
+            get => header;
+            set
+            {
+                if (header != value)
+                {
+                    header = value;
+                    Raise(nameof(Header));
+                }
+            }
+        }
+
+        private string sizeButtonText = "";
+        public string SizeButtonText
+        {
+            get => sizeButtonText;
+            set
+            {
+                if (sizeButtonText != value)
+                {
+                    sizeButtonText = value;
+                    Raise(nameof(SizeButtonText));
+                }
+            }
+        }
+
+        private List<string> titles = new();
+        public List<string> Titles
+        {
+            get => titles;
+            set
+            {
+                titles = value;
+                Raise(nameof(Titles));
+            }
+        }
+
+        private bool isExpanded;
+        public bool IsExpanded
+        {
+            get => isExpanded;
+            set
+            {
+                if (isExpanded != value)
+                {
+                    isExpanded = value;
+                    Raise(nameof(IsExpanded));
+                }
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        private void Raise(string name)
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
+    // The extension window id is resolved by title exactly once — right after the user expands the window, when its title is fresh — then locked in (in memory and on disk). Re-matching by title on every refresh is wrong: window titles follow the active tab, so a stale or duplicated title can pair the expansion with whichever window happens to share it.
+    private List<BrowserTab>? GetTabsForExpandedWindow(WindowEntry member)
+    {
+        if (!browserWindowIdByHwnd.TryGetValue(member.Hwnd, out int windowId))
+        {
+            int? persisted = ExpandedTabWindows.GetWindowId(member.Hwnd);
+            if (persisted is null)
+            {
+                List<BrowserTab>? matched = ExtensionThumbnails.TryGetTabsForWindow(member.Title);
+                if (matched is null || matched.Count == 0)
+                {
+                    return null;
+                }
+                persisted = matched[0].WindowId;
+                ExpandedTabWindows.SetWindowId(member.Hwnd, persisted.Value);
+            }
+            windowId = persisted.Value;
+            browserWindowIdByHwnd[member.Hwnd] = windowId;
+        }
+        return ExtensionThumbnails.TryGetTabsByWindowId(windowId);
     }
 
     private List<WindowEntry> BuildBrowserTabEntries(WindowEntry parent, List<BrowserTab> tabs)
@@ -424,6 +700,11 @@ public partial class MainWindow : Window
         WindowEntry target = entry.BrowserTab is not null && entriesByHwnd.TryGetValue(entry.Hwnd, out WindowEntry? parent) ? parent : entry;
         target.ExpandTabs = !target.ExpandTabs;
         ExpandedTabWindows.Set(target.Hwnd, target.ExpandTabs);
+        // Collapsing forgets the pairing so a later re-expand resolves fresh against the window's then-current title.
+        if (!target.ExpandTabs)
+        {
+            browserWindowIdByHwnd.Remove(target.Hwnd);
+        }
         RecomputeGroups();
     }
 

@@ -56,8 +56,6 @@ public sealed class WindowEntry : INotifyPropertyChanged
     // Shown on browser windows and on their expanded tab entries alike — toggling from a tab entry collapses the parent window's expansion.
     public bool CanExpandTabs => IsBrowserTab;
 
-    public bool IsVideoThumbnailEnabled => ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.TryGet(title, NotifyIconResolved));
-
     // Browser tabs opt into screenshots per site domain; everything else per process executable.
     public bool IsScreenshotThumbnailEnabled => IsBrowserTab ? ThumbnailWhitelist.IsScreenshotDomainWhitelisted(TabDomains.TryGet(title, NotifyIconResolved)) : ThumbnailWhitelist.IsScreenshotExe(ExePath);
 
@@ -71,7 +69,6 @@ public sealed class WindowEntry : INotifyPropertyChanged
         {
             Raise(nameof(VideoThumbnail));
             Raise(nameof(IconImage));
-            Raise(nameof(IsVideoThumbnailEnabled));
             Raise(nameof(IsScreenshotThumbnailEnabled));
         });
     }
@@ -83,7 +80,6 @@ public sealed class WindowEntry : INotifyPropertyChanged
         Raise(nameof(IconImage));
         Raise(nameof(IsBrowserTab));
         Raise(nameof(CanExpandTabs));
-        Raise(nameof(IsVideoThumbnailEnabled));
         Raise(nameof(IsScreenshotThumbnailEnabled));
     }
 

@@ -1,17 +1,9 @@
-// Runs in every page and reports title+URL to TabDesktop (via the background worker, whose fetch is exempt from the page's CSP) — the bare report doubles as a connectivity heartbeat and feeds the domain whitelist toggle; video pages additionally attach a thumbnail. Running inside the page is the whole point: same-origin fetches carry the site's cookies/session, so auth-gated posters (Jellyfin, anything behind a login) work where no external fetch could.
+// Runs in every page and reports title+URL to TabDesktop (via the background worker, whose fetch is exempt from the page's CSP) — the bare report doubles as a connectivity heartbeat and feeds the screenshot-domain toggle. While the tab is visible it also attaches the page's thumbnail (poster/og:image on any page — every tab is visible at least once, right when it's created); background tabs skip the image work. Running inside the page is the whole point: same-origin fetches carry the site's cookies/session, so auth-gated posters (Jellyfin, anything behind a login) work where no external fetch could.
 
 const THUMB_HEIGHT = 180;
 const JPEG_QUALITY = 0.8;
 const REPORT_INTERVAL_MS = 15000;
 const TITLE_DEBOUNCE_MS = 1000;
-
-function isVideoPage() {
-    if (document.querySelector("video")) {
-        return true;
-    }
-    const ogType = document.querySelector('meta[property="og:type"]')?.content;
-    return !!ogType && ogType.toLowerCase().startsWith("video");
-}
 
 // Last-resort thumbnail for pages that publish no poster/og:image (e.g. Jellyfin playback); cross-origin media taints the canvas and throws.
 function captureFrame() {
@@ -62,7 +54,7 @@ async function toDataUrl(url) {
 
 async function report() {
     const message = { title: document.title, url: location.href };
-    if (isVideoPage()) {
+    if (document.visibilityState === "visible") {
         // The site's own poster/og:image is the curated thumbnail and always beats a frame grab of the playing video.
         const imageUrl = findImageUrl();
         if (imageUrl?.startsWith("data:")) {

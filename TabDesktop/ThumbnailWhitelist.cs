@@ -3,15 +3,12 @@ using System.Text.Json;
 
 namespace TabDesktop;
 
-// Persisted opt-in lists controlling thumbnail resolution, toggled from the tab right-click popup: video thumbnails run only for whitelisted domains (so we don't chase a thumbnail for every open tab), and the window screenshot stands in as the thumbnail for whitelisted executables — the fallback for non-browser apps.
+// Persisted opt-in lists controlling screenshot thumbnails, toggled from the tab right-click popup: the window screenshot stands in as the thumbnail for whitelisted executables (non-browser apps) or whitelisted site domains (browser tabs). Page thumbnails (poster/og:image) need no opt-in — the extension checks every focused page.
 public static class ThumbnailWhitelist
 {
     private static readonly string ConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TabDesktop", "thumbnail-whitelist.json");
-    // Seeded on first run to preserve the behavior from before the whitelist existed.
-    private const string DefaultDomain = "youtube.com";
 
     private static readonly object gate = new();
-    private static readonly HashSet<string> domains = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HashSet<string> screenshotExes = new(StringComparer.OrdinalIgnoreCase);
     // Screenshot opt-in for browser tabs is per-domain — whitelisting the browser exe would drag every site along.
     private static readonly HashSet<string> screenshotDomains = new(StringComparer.OrdinalIgnoreCase);
@@ -24,31 +21,16 @@ public static class ThumbnailWhitelist
         {
             if (!File.Exists(ConfigPath))
             {
-                domains.Add(DefaultDomain);
-                Save();
                 return;
             }
             var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
             Config config = JsonSerializer.Deserialize<Config>(File.ReadAllText(ConfigPath), options) ?? new Config();
-            domains.UnionWith(config.Domains);
             screenshotExes.UnionWith(config.ScreenshotExes);
             screenshotDomains.UnionWith(config.ScreenshotDomains);
         }
         catch (Exception ex)
         {
             AppLog.Write(nameof(ThumbnailWhitelist), ex.ToString());
-        }
-    }
-
-    public static bool IsDomainWhitelisted(string? host)
-    {
-        if (host is null)
-        {
-            return false;
-        }
-        lock (gate)
-        {
-            return domains.Contains(host);
         }
     }
 
@@ -94,52 +76,37 @@ public static class ThumbnailWhitelist
                 AppLog.Write(nameof(ThumbnailWhitelist), $"Could not determine the domain for \"{windowTitle}\" — no extension report and no History match yet.");
                 return;
             }
-            lock (gate)
-            {
-                if (!screenshotDomains.Add(host))
-                {
-                    screenshotDomains.Remove(host);
-                }
-                Save();
-            }
-            Changed?.Invoke();
+            ToggleScreenshotDomain(host);
         });
     }
 
-    // Resolving the tab's domain may need a browser History query, so the toggle runs off-thread.
-    public static void ToggleDomainForWindow(string windowTitle)
-    {
-        Task.Run(() =>
-        {
-            string? host = null;
-            try
-            {
-                host = TabDomains.Resolve(windowTitle);
-            }
-            catch (Exception ex)
-            {
-                AppLog.Write(nameof(ThumbnailWhitelist), ex.ToString());
-            }
-            if (host is null)
-            {
-                AppLog.Write(nameof(ThumbnailWhitelist), $"Could not determine the domain for \"{windowTitle}\" — no extension report and no History match yet.");
-                return;
-            }
-            ToggleDomain(host);
-        });
-    }
-
-    public static void ToggleDomain(string host)
+    public static void ToggleScreenshotDomain(string host)
     {
         lock (gate)
         {
-            if (!domains.Add(host))
+            if (!screenshotDomains.Add(host))
             {
-                domains.Remove(host);
+                screenshotDomains.Remove(host);
             }
             Save();
         }
         Changed?.Invoke();
+    }
+
+    public static List<string> GetScreenshotDomains()
+    {
+        lock (gate)
+        {
+            return screenshotDomains.OrderBy(d => d).ToList();
+        }
+    }
+
+    public static List<string> GetScreenshotExes()
+    {
+        lock (gate)
+        {
+            return screenshotExes.OrderBy(e => e).ToList();
+        }
     }
 
     public static void ToggleScreenshotExe(string exePath)
@@ -159,7 +126,7 @@ public static class ThumbnailWhitelist
     {
         try
         {
-            var config = new Config { Domains = domains.ToList(), ScreenshotExes = screenshotExes.ToList(), ScreenshotDomains = screenshotDomains.ToList() };
+            var config = new Config { ScreenshotExes = screenshotExes.ToList(), ScreenshotDomains = screenshotDomains.ToList() };
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
             File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -171,7 +138,6 @@ public static class ThumbnailWhitelist
 
     private sealed class Config
     {
-        public List<string> Domains { get; set; } = new();
         public List<string> ScreenshotExes { get; set; } = new();
         public List<string> ScreenshotDomains { get; set; } = new();
     }

@@ -70,10 +70,6 @@ public static class ExtensionThumbnails
         lock (gate)
         {
             url = urlsByTitle.GetValueOrDefault(key);
-            if (!ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.GetHost(url)))
-            {
-                return null;
-            }
             if (thumbnailsByTitle.TryGetValue(key, out ImageSource? image))
             {
                 return image;
@@ -308,18 +304,12 @@ public static class ExtensionThumbnails
                 urlsDirty = true;
             }
         }
-        bool whitelisted = ThumbnailWhitelist.IsDomainWhitelisted(TabDomains.GetHost(report.Url));
         byte[]? imageBytes = null;
         if (!string.IsNullOrEmpty(report.ImageDataUrl))
         {
-            // Data URLs decode locally regardless of the whitelist, so toggling a domain on shows its already-reported thumbnail instantly.
             imageBytes = DecodeDataUrl(report.ImageDataUrl);
-            if (imageBytes is null)
-            {
-                return;
-            }
         }
-        else if (whitelisted && !string.IsNullOrEmpty(report.ImageUrl))
+        else if (!string.IsNullOrEmpty(report.ImageUrl))
         {
             imageBytes = http.GetByteArrayAsync(report.ImageUrl).GetAwaiter().GetResult();
         }
@@ -336,10 +326,7 @@ public static class ExtensionThumbnails
         {
             thumbnailsByTitle[key] = image;
         }
-        if (whitelisted)
-        {
-            Updated?.Invoke();
-        }
+        Updated?.Invoke();
     }
 
     // All tabs of the browser window whose active tab matches the window title; falls back to null while no report has arrived.
