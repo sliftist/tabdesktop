@@ -1,0 +1,11 @@
+{
+    "name": "tabdesktop",
+    "version": "0.1.0",
+    "private": true,
+    "scripts": {
+        "build": "node scripts/dotnet.js build TabDesktop",
+        "start": "node scripts/dotnet.js run --project TabDesktop",
+        "release": "node scripts/dotnet.js publish TabDesktop -c Release -o dist",
+        "clean": "node scripts/dotnet.js clean TabDesktop"
+    }
+}

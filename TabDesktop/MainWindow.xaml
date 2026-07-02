@@ -1,0 +1,101 @@
+<Window x:Class="TabDesktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:TabDesktop"
+        mc:Ignorable="d"
+        Title="TabDesktop" Height="700" Width="1100">
+    <TabControl>
+        <TabItem Header="Layout">
+            <Viewbox Stretch="Uniform">
+                <Border x:Name="DesktopBounds" Background="#FF1E1E1E">
+                    <ItemsControl x:Name="LayoutItems">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <Canvas />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="Canvas.Left" Value="{Binding CanvasLeft}" />
+                                <Setter Property="Canvas.Top" Value="{Binding CanvasTop}" />
+                                <Setter Property="Panel.ZIndex" Value="{Binding ZIndex}" />
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Border Width="{Binding Width}" Height="{Binding Height}" BorderThickness="3" BorderBrush="#FF4A9EDE" Background="#FF2A2A2A" ClipToBounds="True">
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Top" Text="{Binding CountText}" FontSize="36" FontWeight="Bold" Foreground="White" HorizontalAlignment="Center" Margin="0,10,0,6" />
+                                        <ItemsControl ItemsSource="{Binding Members}" Margin="14,0,14,10">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding DisplayTitle}" FontSize="24" Foreground="White" TextTrimming="CharacterEllipsis" Margin="0,2" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </DockPanel>
+                                </Border>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </Border>
+            </Viewbox>
+        </TabItem>
+        <TabItem Header="List">
+            <ListView x:Name="WindowList">
+                <ListView.ItemContainerStyle>
+                    <Style TargetType="ListViewItem">
+                        <Setter Property="ToolTip">
+                            <Setter.Value>
+                                <Image Source="{Binding Thumbnail}" MaxWidth="480" MaxHeight="320" Stretch="Uniform" />
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Thumbnail}" Value="{x:Null}">
+                                <Setter Property="ToolTipService.IsEnabled" Value="False" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </ListView.ItemContainerStyle>
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Title" Width="420">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <local:MiddleEllipsisTextBlock FullText="{Binding Title}" VerticalAlignment="Center" />
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
+                        <GridViewColumn Header="Position" Width="110" DisplayMemberBinding="{Binding PositionText}" />
+                        <GridViewColumn Header="Size" Width="110" DisplayMemberBinding="{Binding SizeText}" />
+                        <GridViewColumn Header="PID" Width="70" DisplayMemberBinding="{Binding Pid}" />
+                        <GridViewColumn Header="Status" Width="110" DisplayMemberBinding="{Binding Status}" />
+                    </GridView>
+                </ListView.View>
+            </ListView>
+        </TabItem>
+        <TabItem Header="Threads">
+            <DockPanel>
+                <TextBlock x:Name="WorkerSummary" DockPanel.Dock="Top" Margin="10,8" FontWeight="Bold" />
+                <ListView x:Name="WorkerList">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="PID" Width="80" DisplayMemberBinding="{Binding Pid}" />
+                            <GridViewColumn Header="State" Width="90" DisplayMemberBinding="{Binding State}" />
+                            <GridViewColumn Header="Last poll took" Width="130" DisplayMemberBinding="{Binding Took}" />
+                            <GridViewColumn Header="Last poll" Width="520">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <local:MiddleEllipsisTextBlock FullText="{Binding Poll}" VerticalAlignment="Center" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </DockPanel>
+        </TabItem>
+    </TabControl>
+</Window>

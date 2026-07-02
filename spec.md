@@ -1,0 +1,1 @@
+Specialized icons and title shortening.

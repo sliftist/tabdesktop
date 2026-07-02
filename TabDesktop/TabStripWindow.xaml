@@ -1,0 +1,103 @@
+<Window x:Class="TabDesktop.TabStripWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="" Height="68" WindowStyle="None" ResizeMode="NoResize" ShowInTaskbar="False" Topmost="True" ShowActivated="False" Background="#FF1B1B1B">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" Padding="2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#FF3D6B8F" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <DockPanel>
+        <Border DockPanel.Dock="Left" Width="32" Background="#FF141414">
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock x:Name="CountText" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" />
+                <Button x:Name="ToggleButton" Content="«" FontSize="14" Click="OnToggleCollapse" />
+                <Button Content="⌂" FontSize="12" Click="OnShowMain" ToolTip="Focus and center the TabDesktop window" />
+            </StackPanel>
+        </Border>
+        <StackPanel x:Name="ScrollButtons" DockPanel.Dock="Right" Orientation="Horizontal" Visibility="Collapsed">
+            <Button Content="◀" Width="22" Click="OnScrollLeft" />
+            <Button Content="▶" Width="22" Click="OnScrollRight" />
+        </StackPanel>
+        <Grid>
+            <ScrollViewer x:Name="TabsScroll" HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled" PreviewMouseWheel="OnTabsWheel">
+                <ItemsControl x:Name="Tabs">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel Orientation="Vertical" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border x:Name="TabRoot" Width="200" Margin="1" Padding="6,2" Cursor="Hand" ClipToBounds="True" MouseLeftButtonDown="OnTabMouseDown" MouseMove="OnTabMouseMove" MouseLeftButtonUp="OnTabMouseUp">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Background" Value="#FF2A2A2A" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsGroupLastFocused}" Value="True">
+                                                <Setter Property="Background" Value="#FF4A4230" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsForeground}" Value="True">
+                                                <Setter Property="Background" Value="#FF1E5E8A" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid>
+                                    <Border>
+                                        <Border.Background>
+                                            <ImageBrush ImageSource="{Binding Thumbnail}" Stretch="UniformToFill" Opacity="0.35" />
+                                        </Border.Background>
+                                        <DockPanel>
+                                            <Image DockPanel.Dock="Left" Source="{Binding IconImage}" Width="16" Height="16" Margin="0,0,4,0" VerticalAlignment="Top">
+                                                <Image.Style>
+                                                    <Style TargetType="Image">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IconImage}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Image.Style>
+                                            </Image>
+                                            <TextBlock Text="{Binding DisplayTitle}" Foreground="White" FontSize="12" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="48" />
+                                        </DockPanel>
+                                    </Border>
+                                    <Border x:Name="HoverOverlay" Background="#30000000" Margin="-6,-2" Visibility="Collapsed" />
+                                </Grid>
+                            </Border>
+                            <DataTemplate.Triggers>
+                                <Trigger SourceName="TabRoot" Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="HoverOverlay" Property="Visibility" Value="Visible" />
+                                </Trigger>
+                                <DataTrigger Binding="{Binding IsDragging}" Value="True">
+                                    <Setter TargetName="TabRoot" Property="Opacity" Value="0.45" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+            <Canvas x:Name="IndicatorCanvas" IsHitTestVisible="False">
+                <Rectangle x:Name="DropIndicator" Height="2" Fill="#FF4A9EDE" Visibility="Collapsed" />
+            </Canvas>
+        </Grid>
+    </DockPanel>
+</Window>
