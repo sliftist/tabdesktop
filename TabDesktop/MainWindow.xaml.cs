@@ -510,10 +510,6 @@ public partial class MainWindow : Window
     {
         string query = SavedStateSearch.Text.Trim();
         var rows = new List<SavedStateRow>();
-        foreach (string domain in ThumbnailWhitelist.GetDomains())
-        {
-            rows.Add(new SavedStateRow("Video thumbnail domain", domain, () => ThumbnailWhitelist.ToggleDomain(domain)));
-        }
         foreach (string domain in ThumbnailWhitelist.GetScreenshotDomains())
         {
             rows.Add(new SavedStateRow("Screenshot domain", domain, () => ThumbnailWhitelist.ToggleScreenshotDomain(domain)));

@@ -369,6 +369,15 @@ public static class ExtensionThumbnails
         }
     }
 
+    public static void MoveTab(BrowserTab tab, int newIndex)
+    {
+        byte[] payload = JsonSerializer.SerializeToUtf8Bytes(new { type = "moveTab", tabId = tab.Id, index = newIndex });
+        if (!Broadcast(0x1, payload))
+        {
+            AppLog.Write(nameof(ExtensionThumbnails), $"No extension command socket connected — cannot move tab \"{tab.Title}\".");
+        }
+    }
+
     private static void StoreTabs(TabsReport report)
     {
         var next = new Dictionary<int, List<BrowserTab>>();

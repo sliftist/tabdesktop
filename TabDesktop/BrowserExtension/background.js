@@ -36,6 +36,8 @@ function handleCommand(command) {
         if (command.windowId !== undefined) {
             chrome.windows.update(command.windowId, { focused: true }).catch(() => {});
         }
+    } else if (command.type === "moveTab") {
+        chrome.tabs.move(command.tabId, { index: command.index }).catch(err => console.error("[TabDesktop] moveTab failed:", err?.stack ?? err));
     }
 }
 

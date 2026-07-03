@@ -232,14 +232,6 @@ public partial class TabStripWindow : Window
         }
     }
 
-    private void OnToggleVideoThumbnail(object sender, RoutedEventArgs e)
-    {
-        if (TabActionsPopup.DataContext is WindowEntry entry)
-        {
-            ThumbnailWhitelist.ToggleDomainForWindow(entry.Title);
-        }
-    }
-
     private void OnToggleScreenshotThumbnail(object sender, RoutedEventArgs e)
     {
         if (TabActionsPopup.DataContext is not WindowEntry entry)
@@ -316,10 +308,25 @@ public partial class TabStripWindow : Window
             return;
         }
         // Compute the drop before applying any deferred group update — it reads the tab containers the drag happened over.
-        double newKey = ComputeDropKey(e.GetPosition(Tabs), entry);
+        Point dropPos = e.GetPosition(Tabs);
+        if (entry.BrowserTab is not null)
+        {
+            DropTarget? target = ComputeDropTarget(dropPos, entry);
+            ApplyPendingGroup();
+            if (target is not null)
+            {
+                // Dropping reorders the real browser tab. The new index is how many of the same window's other tabs land before the slot — dropping among real windows or another window's tabs just clamps to this window's edge. chrome.tabs.move takes the final index, so no adjustment for the vacated slot.
+                int newIndex = target.Rest.Take(target.InsertIndex).Count(m => m.BrowserTab is not null && m.Hwnd == entry.Hwnd);
+                if (newIndex != entry.BrowserTab.Index)
+                {
+                    ExtensionThumbnails.MoveTab(entry.BrowserTab, newIndex);
+                }
+            }
+            return;
+        }
+        double newKey = ComputeDropKey(dropPos, entry);
         ApplyPendingGroup();
-        // Browser-tab pseudo-entries can't be reordered from here — their order is the browser's own tab order.
-        if (entry.BrowserTab is null && newKey != entry.OrderKey)
+        if (newKey != entry.OrderKey)
         {
             reorderRequested(entry, newKey);
         }
