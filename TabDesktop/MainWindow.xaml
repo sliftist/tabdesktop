@@ -14,6 +14,12 @@
                     <CheckBox x:Name="RunOnStartupCheck" Content="Run on startup — start TabDesktop automatically when you log in" Checked="OnRunOnStartupChanged" Unchecked="OnRunOnStartupChanged" Margin="0,0,0,8" />
                     <CheckBox x:Name="AdvancedModeCheck" Content="Advanced mode — show the extra tab strip buttons (rebuild, extension, height); basic mode shows only the count, collapse, and home buttons" Checked="OnAdvancedModeChanged" Unchecked="OnAdvancedModeChanged" Margin="0,0,0,8" />
                     <CheckBox x:Name="ShowWhenFullscreenCheck" Content="Show tab strips even when a window is fullscreen — normally strips hide on any monitor a fullscreen window covers, so movies and games stay unobstructed" Checked="OnShowWhenFullscreenChanged" Unchecked="OnShowWhenFullscreenChanged" Margin="0,0,0,8" />
+                    <CheckBox x:Name="SearchEnabledCheck" Content="Enable search — a global hotkey opens a search box over all tabs; type, then Enter to jump to the selected tab" Checked="OnSearchEnabledChanged" Unchecked="OnSearchEnabledChanged" Margin="0,0,0,4" />
+                    <StackPanel Orientation="Horizontal" Margin="22,0,0,8">
+                        <TextBlock Text="Hotkey:  " VerticalAlignment="Center" />
+                        <TextBox x:Name="SearchHotkeyBox" Width="160" IsReadOnly="True" PreviewKeyDown="OnSearchHotkeyBoxKeyDown" ToolTip="Click here, then press the key combination you want" />
+                        <TextBlock x:Name="SearchHotkeyStatus" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="#CCCC0000" />
+                    </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                         <Button x:Name="InstallAppButton" Content="Install TabDesktop" Padding="10,4" Click="OnInstallApp" ToolTip="Copies the app into your user programs folder, adds it to the Start Menu and Add/Remove Programs, and turns on run-on-startup — the exe you launched can stay where it is" />
                     </StackPanel>

@@ -30,6 +30,12 @@ internal static class NativeMethods
     public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
     public const uint GW_OWNER = 4;
+    public const int WM_HOTKEY = 0x0312;
+    public const uint MOD_ALT = 0x0001;
+    public const uint MOD_CONTROL = 0x0002;
+    public const uint MOD_SHIFT = 0x0004;
+    public const uint MOD_WIN = 0x0008;
+    public const uint MOD_NOREPEAT = 0x4000;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
@@ -196,4 +202,10 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
 }

@@ -6,6 +6,8 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using TabDesktop.Interop;
@@ -38,6 +40,9 @@ public partial class MainWindow : Window
     // Settings-tab rows persist across refreshes (matched to groups by shared hwnds) so their expanders don't collapse every tick.
     private readonly ObservableCollection<GroupRow> settingsGroups = new();
     private ExtensionInstallWindow? installWindow;
+    private SearchWindow? searchWindow;
+    private HwndSource? hwndSource;
+    private const int SearchHotkeyId = 1;
     private readonly List<TabStripWindow> tabStrips = new();
     private readonly Dictionary<IntPtr, long> previewCapturedAt = new();
     private IntPtr lastForeground;
@@ -74,7 +79,16 @@ public partial class MainWindow : Window
         RebuildRestartButton.Visibility = TabStripWindow.CanRebuildRestart ? Visibility.Visible : Visibility.Collapsed;
         AdvancedModeCheck.IsChecked = AppSettings.AdvancedMode;
         ShowWhenFullscreenCheck.IsChecked = AppSettings.ShowWhenFullscreen;
+        SearchEnabledCheck.IsChecked = AppSettings.SearchEnabled;
+        SearchHotkeyBox.Text = AppSettings.SearchHotkey;
         RunOnStartupCheck.IsChecked = Installer.IsAutoStartEnabled();
+        // The global hotkey needs a win32 window handle; it registers against this window's message loop, which exists for the app's whole lifetime even while hidden.
+        SourceInitialized += (_, _) =>
+        {
+            hwndSource = (HwndSource?)PresentationSource.FromVisual(this);
+            hwndSource?.AddHook(OnWindowMessage);
+            ApplySearchHotkey();
+        };
         // Strips re-read AdvancedMode inside their layout pass; a full refresh pushes the change to every strip immediately.
         AppSettings.Changed += () => Dispatcher.BeginInvoke(RefreshWindows);
         // Extension reports and whitelist toggles happen off the UI thread; re-raise the derived bindings so tabs pick up new thumbnails and toggle states.
@@ -458,6 +472,92 @@ public partial class MainWindow : Window
     private void OnShowWhenFullscreenChanged(object sender, RoutedEventArgs e)
     {
         AppSettings.SetShowWhenFullscreen(ShowWhenFullscreenCheck.IsChecked ?? false);
+    }
+
+    private void OnSearchEnabledChanged(object sender, RoutedEventArgs e)
+    {
+        AppSettings.SetSearchEnabled(SearchEnabledCheck.IsChecked ?? false);
+        ApplySearchHotkey();
+    }
+
+    private void OnSearchHotkeyBoxKeyDown(object sender, KeyEventArgs e)
+    {
+        e.Handled = true;
+        HotkeyCombo? combo = HotkeyCombo.FromKeyEvent(e);
+        if (combo is null)
+        {
+            return;
+        }
+        SearchHotkeyBox.Text = combo.ToString();
+        AppSettings.SetSearchHotkey(combo.ToString());
+        ApplySearchHotkey();
+    }
+
+    private IntPtr OnWindowMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == NativeMethods.WM_HOTKEY && wParam.ToInt32() == SearchHotkeyId)
+        {
+            ToggleSearchWindow();
+            handled = true;
+        }
+        return IntPtr.Zero;
+    }
+
+    private void ApplySearchHotkey()
+    {
+        if (hwndSource is null)
+        {
+            return;
+        }
+        NativeMethods.UnregisterHotKey(hwndSource.Handle, SearchHotkeyId);
+        SearchHotkeyStatus.Text = "";
+        if (!AppSettings.SearchEnabled)
+        {
+            return;
+        }
+        HotkeyCombo? combo = HotkeyCombo.TryParse(AppSettings.SearchHotkey);
+        if (combo is null)
+        {
+            SearchHotkeyStatus.Text = "Unrecognized hotkey — click the box and press a new combination";
+            return;
+        }
+        if (!NativeMethods.RegisterHotKey(hwndSource.Handle, SearchHotkeyId, combo.ModifierFlags | NativeMethods.MOD_NOREPEAT, combo.VirtualKey))
+        {
+            SearchHotkeyStatus.Text = $"Couldn't register {combo} — it may be reserved by Windows or in use by another app";
+            AppLog.Write(nameof(MainWindow), SearchHotkeyStatus.Text);
+        }
+    }
+
+    // Non-modal singleton, same pattern as the extension-install window; pressing the hotkey again dismisses it.
+    private void ToggleSearchWindow()
+    {
+        if (searchWindow is not null)
+        {
+            searchWindow.Close();
+            return;
+        }
+        searchWindow = new SearchWindow(GetSearchEntries, ActivateEntry);
+        searchWindow.Closed += (_, _) => searchWindow = null;
+        searchWindow.Show();
+        searchWindow.Activate();
+    }
+
+    // Everything the strips can show — including expanded browser-tab pseudo-entries — plus minimized windows, which have no layout group but are still tabs the user may want to jump to.
+    private List<WindowEntry> GetSearchEntries()
+    {
+        var result = groups.SelectMany(g => g.Members).ToList();
+        var shown = new HashSet<IntPtr>(result.Select(e => e.Hwnd));
+        result.AddRange(windows.Where(w => !shown.Contains(w.Hwnd) && w.Title != LoadingTitle));
+        return result;
+    }
+
+    private void ActivateEntry(WindowEntry entry)
+    {
+        if (entry.BrowserTab is not null)
+        {
+            ExtensionThumbnails.ActivateTab(entry.BrowserTab);
+        }
+        FocusWindow(entry.Hwnd);
     }
 
     private void OnRunOnStartupChanged(object sender, RoutedEventArgs e)
