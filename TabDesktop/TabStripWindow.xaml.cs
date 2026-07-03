@@ -120,6 +120,16 @@ public partial class TabStripWindow : Window
         Width = Math.Min(desired, Math.Max(groupWidth, headerWidth + TabOuterWidth + ScrollButtonsWidth));
     }
 
+    // Hidden (not closed) while a fullscreen window covers the group's monitor, so the strip's state and identity survive the movie ending.
+    public void SetSuppressed(bool value)
+    {
+        Visibility target = value ? Visibility.Hidden : Visibility.Visible;
+        if (Visibility != target)
+        {
+            Visibility = target;
+        }
+    }
+
     private void OnToggleCollapse(object sender, RoutedEventArgs e)
     {
         collapsed = !collapsed;

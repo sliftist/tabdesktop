@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -67,6 +68,7 @@ public partial class MainWindow : Window
         LogList.ItemsSource = AppLog.Entries;
         SettingsGroups.ItemsSource = settingsGroups;
         AdvancedModeCheck.IsChecked = AppSettings.AdvancedMode;
+        ShowWhenFullscreenCheck.IsChecked = AppSettings.ShowWhenFullscreen;
         RunOnStartupCheck.IsChecked = Installer.IsAutoStartEnabled();
         // Strips re-read AdvancedMode inside their layout pass; a full refresh pushes the change to every strip immediately.
         AppSettings.Changed += () => Dispatcher.BeginInvoke(RefreshWindows);
@@ -418,6 +420,11 @@ public partial class MainWindow : Window
     private void OnAdvancedModeChanged(object sender, RoutedEventArgs e)
     {
         AppSettings.SetAdvancedMode(AdvancedModeCheck.IsChecked ?? false);
+    }
+
+    private void OnShowWhenFullscreenChanged(object sender, RoutedEventArgs e)
+    {
+        AppSettings.SetShowWhenFullscreen(ShowWhenFullscreenCheck.IsChecked ?? false);
     }
 
     private void OnRunOnStartupChanged(object sender, RoutedEventArgs e)
@@ -805,8 +812,42 @@ public partial class MainWindow : Window
         }
     }
 
+    // Monitors fully covered by a normal window (rect contains the whole monitor, taskbar included) — the borderless-fullscreen signature of movies and games. The desktop shell's own windows also span monitors, so they're excluded by class.
+    private List<Rect> FindFullscreenMonitors()
+    {
+        double screenLeft = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+        double screenTop = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+        var fullscreen = new List<Rect>();
+        foreach (Rect monitor in WindowScanner.GetMonitorRects())
+        {
+            foreach (WindowEntry entry in windows)
+            {
+                if (!entry.ShowInLayout)
+                {
+                    continue;
+                }
+                var windowRect = new Rect(entry.CanvasLeft + screenLeft, entry.CanvasTop + screenTop, entry.LayoutWidth, entry.LayoutHeight);
+                if (windowRect.Contains(monitor) && !IsShellWindow(entry.Hwnd))
+                {
+                    fullscreen.Add(monitor);
+                    break;
+                }
+            }
+        }
+        return fullscreen;
+    }
+
+    private static bool IsShellWindow(IntPtr hwnd)
+    {
+        var name = new StringBuilder(64);
+        NativeMethods.GetClassName(hwnd, name, name.Capacity);
+        string className = name.ToString();
+        return className == "Progman" || className == "WorkerW";
+    }
+
     private void SyncTabStrips()
     {
+        List<Rect> fullscreenMonitors = AppSettings.ShowWhenFullscreen ? new List<Rect>() : FindFullscreenMonitors();
         double dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
         var unmatched = new List<TabStripWindow>(tabStrips);
         foreach (WindowGroup group in groups.Where(g => g.Members.Count >= 2))
@@ -835,6 +876,8 @@ public partial class MainWindow : Window
                 unmatched.Remove(best);
                 best.Update(group, dpiScale);
             }
+            var groupRect = new Rect(group.ScreenLeft, group.ScreenTop, group.Width, group.Height);
+            best.SetSuppressed(fullscreenMonitors.Any(monitor => monitor.IntersectsWith(groupRect)));
         }
         foreach (TabStripWindow leftover in unmatched)
         {

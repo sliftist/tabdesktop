@@ -10,6 +10,9 @@ public static class AppSettings
 
     public static bool AdvancedMode { get; private set; }
 
+    // Off by default: a fullscreen window (movie, game) covering a monitor hides that monitor's strips so our topmost UI doesn't sit on top of it.
+    public static bool ShowWhenFullscreen { get; private set; }
+
     public static event Action? Changed;
 
     static AppSettings()
@@ -20,6 +23,7 @@ public static class AppSettings
             {
                 Config config = JsonSerializer.Deserialize<Config>(File.ReadAllText(ConfigPath)) ?? new Config();
                 AdvancedMode = config.AdvancedMode;
+                ShowWhenFullscreen = config.ShowWhenFullscreen;
             }
         }
         catch (Exception ex)
@@ -39,12 +43,23 @@ public static class AppSettings
         Changed?.Invoke();
     }
 
+    public static void SetShowWhenFullscreen(bool value)
+    {
+        if (ShowWhenFullscreen == value)
+        {
+            return;
+        }
+        ShowWhenFullscreen = value;
+        Save();
+        Changed?.Invoke();
+    }
+
     private static void Save()
     {
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(new Config { AdvancedMode = AdvancedMode }));
+            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(new Config { AdvancedMode = AdvancedMode, ShowWhenFullscreen = ShowWhenFullscreen }));
         }
         catch (Exception ex)
         {
@@ -55,5 +70,6 @@ public static class AppSettings
     private sealed class Config
     {
         public bool AdvancedMode { get; set; }
+        public bool ShowWhenFullscreen { get; set; }
     }
 }

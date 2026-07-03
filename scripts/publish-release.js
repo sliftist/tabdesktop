@@ -36,6 +36,8 @@ function runQuiet(command, args) {
 }
 
 async function main() {
+    // --unsigned tags unsigned-vX.Y.Z instead of vX.Y.Z, which triggers the signing-free Release (unsigned) workflow rather than the signed one.
+    const unsigned = process.argv.includes("--unsigned");
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
     const parts = String(packageJson.version).split(".").map(Number);
     if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
@@ -44,7 +46,7 @@ async function main() {
     }
     parts[2] += 1;
     const version = parts.join(".");
-    const tag = `v${version}`;
+    const tag = unsigned ? `unsigned-v${version}` : `v${version}`;
 
     const existing = await runQuiet("git", ["rev-parse", "--verify", "--quiet", `refs/tags/${tag}`]);
     if (existing.code === 0) {
@@ -63,7 +65,7 @@ async function main() {
     await run("git", ["push"]);
     await run("git", ["tag", tag]);
     await run("git", ["push", "origin", tag]);
-    console.log(`Pushed ${tag} — the Release workflow is now building the exe and creating the GitHub release: https://github.com/sliftist/tabdesktop/actions`);
+    console.log(`Pushed ${tag} — the ${unsigned ? "Release (unsigned)" : "Release"} workflow is now building the exe and creating the GitHub release: https://github.com/sliftist/tabdesktop/actions`);
 }
 
 main().catch((err) => {

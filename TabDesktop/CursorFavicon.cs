@@ -7,7 +7,7 @@ using System.Xml.Linq;
 
 namespace TabDesktop;
 
-// Cursor's title carries the workspace folder name, not its path, so the directory is resolved by probing known code roots for a folder of that name. If it contains a favicon.svg, that becomes the tab icon. SVG support is deliberately minimal — viewBox plus <path> elements with plain fills — which covers typical favicons; anything fancier just falls back to the rule icon.
+// Cursor's title carries the workspace folder name, not its path, so the directory is resolved by probing known code roots for a folder of that name. If it contains a favicon.svg, that becomes the tab icon. SVG support is deliberately minimal — viewBox plus path/rect/circle/ellipse elements with plain fills, in document order — which covers typical favicons; anything fancier just falls back to the rule icon.
 public static class CursorFavicon
 {
     private static readonly string[] DirectoryRoots = { "D:/repos" };
@@ -88,39 +88,85 @@ public static class CursorFavicon
                 group.ClipGeometry = new RectangleGeometry(viewBoxRect);
             }
         }
-        int pathCount = 0;
-        foreach (XElement pathElement in root.Descendants().Where(e => e.Name.LocalName == "path"))
+        int shapeCount = 0;
+        foreach (XElement element in root.Descendants())
         {
-            string? data = pathElement.Attribute("d")?.Value;
-            string fill = pathElement.Attribute("fill")?.Value ?? "#000000";
-            if (string.IsNullOrEmpty(data) || fill == "none")
-            {
-                continue;
-            }
-            Brush brush = ResolveFill(fill, gradientColors);
             try
             {
-                Drawing drawing = new GeometryDrawing(brush, null, Geometry.Parse(data));
-                Matrix? transform = ParseTransform(pathElement.Attribute("transform")?.Value);
+                Geometry? geometry = CreateGeometry(element);
+                if (geometry is null)
+                {
+                    continue;
+                }
+                string fill = element.Attribute("fill")?.Value ?? "#000000";
+                if (fill == "none")
+                {
+                    continue;
+                }
+                Brush brush = ResolveFill(fill, gradientColors);
+                Drawing drawing = new GeometryDrawing(brush, null, geometry);
+                Matrix? transform = ParseTransform(element.Attribute("transform")?.Value);
                 if (transform is Matrix matrix)
                 {
                     drawing = new DrawingGroup { Transform = new MatrixTransform(matrix), Children = { drawing } };
                 }
                 group.Children.Add(drawing);
-                pathCount++;
+                shapeCount++;
             }
             catch (Exception ex)
             {
                 Trace.WriteLine(ex);
             }
         }
-        if (pathCount == 0)
+        if (shapeCount == 0)
         {
             return null;
         }
         var image = new DrawingImage(group);
         image.Freeze();
         return image;
+    }
+
+    private static Geometry? CreateGeometry(XElement element)
+    {
+        switch (element.Name.LocalName)
+        {
+            case "path":
+            {
+                string? data = element.Attribute("d")?.Value;
+                return string.IsNullOrEmpty(data) ? null : Geometry.Parse(data);
+            }
+            case "rect":
+            {
+                double rx = Attr(element, "rx", double.NaN);
+                double ry = Attr(element, "ry", double.NaN);
+                // SVG: a missing corner radius inherits the other; both missing means square corners.
+                if (double.IsNaN(rx))
+                {
+                    rx = double.IsNaN(ry) ? 0 : ry;
+                }
+                if (double.IsNaN(ry))
+                {
+                    ry = rx;
+                }
+                return new RectangleGeometry(new Rect(Attr(element, "x"), Attr(element, "y"), Attr(element, "width"), Attr(element, "height")), rx, ry);
+            }
+            case "circle":
+            {
+                double r = Attr(element, "r");
+                return new EllipseGeometry(new Point(Attr(element, "cx"), Attr(element, "cy")), r, r);
+            }
+            case "ellipse":
+                return new EllipseGeometry(new Point(Attr(element, "cx"), Attr(element, "cy")), Attr(element, "rx"), Attr(element, "ry"));
+            default:
+                return null;
+        }
+    }
+
+    private static double Attr(XElement element, string name, double fallback = 0)
+    {
+        string? value = element.Attribute(name)?.Value;
+        return value is not null && double.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, out double parsed) ? parsed : fallback;
     }
 
     private static Brush ResolveFill(string fill, Dictionary<string, Color> gradientColors)

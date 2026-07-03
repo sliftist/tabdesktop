@@ -12,6 +12,7 @@
                 <StackPanel Margin="16,12" MaxWidth="900" HorizontalAlignment="Left">
                     <CheckBox x:Name="RunOnStartupCheck" Content="Run on startup — start TabDesktop automatically when you log in" Checked="OnRunOnStartupChanged" Unchecked="OnRunOnStartupChanged" Margin="0,0,0,8" />
                     <CheckBox x:Name="AdvancedModeCheck" Content="Advanced mode — show the extra tab strip buttons (rebuild, extension, height); basic mode shows only the count, collapse, and home buttons" Checked="OnAdvancedModeChanged" Unchecked="OnAdvancedModeChanged" Margin="0,0,0,8" />
+                    <CheckBox x:Name="ShowWhenFullscreenCheck" Content="Show tab strips even when a window is fullscreen — normally strips hide on any monitor a fullscreen window covers, so movies and games stay unobstructed" Checked="OnShowWhenFullscreenChanged" Unchecked="OnShowWhenFullscreenChanged" Margin="0,0,0,8" />
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                         <Button x:Name="InstallAppButton" Content="Install TabDesktop" Padding="10,4" Click="OnInstallApp" ToolTip="Copies the app into your user programs folder, adds it to the Start Menu and Add/Remove Programs, and turns on run-on-startup — the exe you launched can stay where it is" />
                     </StackPanel>

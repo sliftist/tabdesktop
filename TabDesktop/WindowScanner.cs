@@ -26,6 +26,17 @@ public static class WindowScanner
         return result;
     }
 
+    public static List<System.Windows.Rect> GetMonitorRects()
+    {
+        var monitors = new List<System.Windows.Rect>();
+        NativeMethods.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr _, IntPtr _, ref NativeMethods.RECT rect, IntPtr _) =>
+        {
+            monitors.Add(new System.Windows.Rect(rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top));
+            return true;
+        }, IntPtr.Zero);
+        return monitors;
+    }
+
     // Title (user32's cached caption), rect, and minimized state never wait on the target process, so this is safe on any thread — it's the whole poll for non-visible windows, which mostly just need "is it visible yet".
     public static WindowData? GatherBasics(IntPtr hwnd)
     {

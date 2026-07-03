@@ -22,8 +22,13 @@ public static class BrowserFavicon
     };
 
     private static readonly object gate = new();
-    private static readonly Dictionary<string, ImageSource?> resolvedByPageTitle = new();
+    private static readonly Dictionary<string, CachedIcon> resolvedByPageTitle = new();
     private static readonly HashSet<string> pending = new();
+    // Misses retry quickly — the visit may simply not be checkpointed into History yet, or the site's favicon was just added (common during development). Hits refresh occasionally so a changed favicon shows up without an app restart.
+    private static readonly TimeSpan MissRetryInterval = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan HitRefreshInterval = TimeSpan.FromMinutes(5);
+
+    private sealed record CachedIcon(ImageSource? Image, long ResolvedAt);
 
     // Sites surface an unread count in document.title ("(3) Inbox"); stripping it lets titles match History rows and extension reports regardless of when the count changed.
     public static string StripNotificationCount(string title)
@@ -52,15 +57,23 @@ public static class BrowserFavicon
         {
             return null;
         }
+        ImageSource? staleImage = null;
         lock (gate)
         {
-            if (resolvedByPageTitle.TryGetValue(pageTitle, out ImageSource? cached))
+            if (resolvedByPageTitle.TryGetValue(pageTitle, out CachedIcon? cached))
             {
-                return cached;
+                TimeSpan age = Stopwatch.GetElapsedTime(cached.ResolvedAt);
+                bool fresh = cached.Image is null ? age <= MissRetryInterval : age <= HitRefreshInterval;
+                if (fresh)
+                {
+                    return cached.Image;
+                }
+                // Stale-while-revalidate: keep showing the old icon while the refresh runs.
+                staleImage = cached.Image;
             }
             if (!pending.Add(pageTitle))
             {
-                return null;
+                return staleImage;
             }
         }
         Task.Run(() =>
@@ -74,17 +87,22 @@ public static class BrowserFavicon
             {
                 Trace.WriteLine(ex);
             }
+            bool changed;
             lock (gate)
             {
-                resolvedByPageTitle[pageTitle] = image;
+                ImageSource? previous = resolvedByPageTitle.TryGetValue(pageTitle, out CachedIcon? old) ? old.Image : null;
+                // A failed refresh keeps the previous icon rather than flickering it away.
+                ImageSource? effective = image ?? previous;
+                resolvedByPageTitle[pageTitle] = new CachedIcon(effective, Stopwatch.GetTimestamp());
                 pending.Remove(pageTitle);
+                changed = !ReferenceEquals(effective, previous);
             }
-            if (image is not null)
+            if (changed)
             {
                 onResolved();
             }
         });
-        return null;
+        return staleImage;
     }
 
     // Looks up the most recently visited URL whose page title matches, across all known browser profiles.
