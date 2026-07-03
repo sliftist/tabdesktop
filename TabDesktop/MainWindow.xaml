@@ -10,6 +10,7 @@
         <TabItem Header="Settings">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="16,12" MaxWidth="900" HorizontalAlignment="Left">
+                    <TextBlock Margin="0,0,0,12"><Run x:Name="BuildVersionRun" FontWeight="Bold" /><Run x:Name="BuildTimeRun" Foreground="#66000000" /></TextBlock>
                     <CheckBox x:Name="RunOnStartupCheck" Content="Run on startup — start TabDesktop automatically when you log in" Checked="OnRunOnStartupChanged" Unchecked="OnRunOnStartupChanged" Margin="0,0,0,8" />
                     <CheckBox x:Name="AdvancedModeCheck" Content="Advanced mode — show the extra tab strip buttons (rebuild, extension, height); basic mode shows only the count, collapse, and home buttons" Checked="OnAdvancedModeChanged" Unchecked="OnAdvancedModeChanged" Margin="0,0,0,8" />
                     <CheckBox x:Name="ShowWhenFullscreenCheck" Content="Show tab strips even when a window is fullscreen — normally strips hide on any monitor a fullscreen window covers, so movies and games stay unobstructed" Checked="OnShowWhenFullscreenChanged" Unchecked="OnShowWhenFullscreenChanged" Margin="0,0,0,8" />
@@ -21,7 +22,7 @@
                     <TextBlock x:Name="ExtensionStatusText" Margin="0,0,0,6" TextWrapping="Wrap" />
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                         <Button Content="Install / update the extension…" Padding="10,4" Click="OnOpenExtensionInstall" />
-                        <Button Content="Rebuild and restart TabDesktop" Padding="10,4" Margin="8,0,0,0" Click="OnRebuildRestartClick" />
+                        <Button x:Name="RebuildRestartButton" Content="Rebuild and restart TabDesktop" Padding="10,4" Margin="8,0,0,0" Click="OnRebuildRestartClick" />
                     </StackPanel>
 
                     <TextBlock Text="Tab strip groups" FontWeight="Bold" FontSize="14" Margin="0,4,0,4" />

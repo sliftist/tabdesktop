@@ -4,6 +4,9 @@ const THUMB_HEIGHT = 180;
 const JPEG_QUALITY = 0.8;
 const REPORT_INTERVAL_MS = 15000;
 const TITLE_DEBOUNCE_MS = 1000;
+const VISIBLE_IMAGE_RECHECK_MS = 5000;
+
+let lastReportedImageUrl;
 
 // Last-resort thumbnail for pages that publish no poster/og:image (e.g. Jellyfin playback); cross-origin media taints the canvas and throws.
 function captureFrame() {
@@ -39,7 +42,8 @@ function findImageUrl() {
 }
 
 async function toDataUrl(url) {
-    const response = await fetch(url, { credentials: "include" });
+    // same-origin: cookies still attach for auth-gated posters (Jellyfin), while cross-origin CDN fetches stay uncredentialed — credentialed requests reject the Access-Control-Allow-Origin:* that CDNs (i.ytimg.com) serve.
+    const response = await fetch(url, { credentials: "same-origin" });
     if (!response.ok) {
         throw new Error(`HTTP ${response.status} for ${url}`);
     }
@@ -57,6 +61,7 @@ async function report() {
     if (document.visibilityState === "visible") {
         // The site's own poster/og:image is the curated thumbnail and always beats a frame grab of the playing video.
         const imageUrl = findImageUrl();
+        lastReportedImageUrl = imageUrl;
         if (imageUrl?.startsWith("data:")) {
             // Some sites inline the image as a data URL — it already is the payload, so pass it through without fetching.
             message.imageDataUrl = imageUrl;
@@ -86,6 +91,13 @@ async function report() {
 
 report();
 setInterval(report, REPORT_INTERVAL_MS);
+
+// SPAs swap og:image without touching the title (stepping through videos in a player, say), which left the thumbnail out of sync. The DOM read costs nothing, so poll it while visible and re-report only on change.
+setInterval(() => {
+    if (document.visibilityState === "visible" && findImageUrl() !== lastReportedImageUrl) {
+        report();
+    }
+}, VISIBLE_IMAGE_RECHECK_MS);
 
 // Switching to this tab makes the document visible — report right away so TabDesktop shows the newly selected tab's thumbnail without waiting out the interval.
 document.addEventListener("visibilitychange", () => {

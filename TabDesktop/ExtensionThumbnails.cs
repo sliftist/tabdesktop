@@ -47,6 +47,9 @@ public static class ExtensionThumbnails
 
     public static event Action? Updated;
 
+    // Fired only on tab-list reports (activate/move/create/close), so listeners can rebuild group layout without doing that work on every thumbnail report.
+    public static event Action? TabsChanged;
+
     private static long lastReportAt;
 
     public static bool IsConnected
@@ -376,6 +379,23 @@ public static class ExtensionThumbnails
         {
             AppLog.Write(nameof(ExtensionThumbnails), $"No extension command socket connected — cannot move tab \"{tab.Title}\".");
         }
+        // Optimistic local reorder so the strip snaps instantly instead of waiting for the browser's confirmation report; that report then converges to the browser's actual result (which may clamp, e.g. around pinned tabs).
+        lock (gate)
+        {
+            if (tabsByWindowId.TryGetValue(tab.WindowId, out List<BrowserTab>? tabs))
+            {
+                int current = tabs.FindIndex(t => t.Id == tab.Id);
+                if (current >= 0)
+                {
+                    var reordered = new List<BrowserTab>(tabs);
+                    BrowserTab moving = reordered[current];
+                    reordered.RemoveAt(current);
+                    reordered.Insert(Math.Clamp(newIndex, 0, reordered.Count), moving);
+                    tabsByWindowId[tab.WindowId] = reordered.Select((t, i) => t with { Index = i }).ToList();
+                }
+            }
+        }
+        TabsChanged?.Invoke();
     }
 
     private static void StoreTabs(TabsReport report)
@@ -390,6 +410,7 @@ public static class ExtensionThumbnails
             tabsByWindowId = next;
         }
         Updated?.Invoke();
+        TabsChanged?.Invoke();
     }
 
     private static void RunWebSocket(NetworkStream stream, string headerText)

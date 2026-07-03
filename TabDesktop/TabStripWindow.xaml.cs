@@ -95,6 +95,7 @@ public partial class TabStripWindow : Window
         // Basic mode shows only the count/collapse/home column; every other strip button lives in the advanced column, and future buttons must too.
         bool advanced = AppSettings.AdvancedMode;
         AdvancedButtons.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
+        RebuildButton.Visibility = CanRebuildRestart ? Visibility.Visible : Visibility.Collapsed;
         double headerWidth = advanced ? 2 * ButtonColumnWidth : ButtonColumnWidth;
         HeaderBorder.Width = headerWidth;
         Height = doubleHeight ? StripHeight * 2 : StripHeight;
@@ -161,6 +162,9 @@ public partial class TabStripWindow : Window
     {
         showMainRequested();
     }
+
+    // The bat only ships with dev builds (publish excludes it), so its presence doubles as "this machine has the source".
+    public static readonly bool CanRebuildRestart = File.Exists(Path.Combine(AppContext.BaseDirectory, "build-and-run.bat"));
 
     // Launches the batch file that ships beside the exe; it kills this process, rebuilds, and starts the new build — the cmd child survives its parent being killed.
     public static void LaunchRebuildRestart()

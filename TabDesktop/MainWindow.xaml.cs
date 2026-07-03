@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     private static readonly string TabOrderPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TabDesktop", "tab-order.json");
     private const string LoadingTitle = "(loading)";
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
+    // The focused window is the one that moves; polling just its rect between full refreshes keeps the strips tracking it responsively without multiplying the cost of the full scan.
+    private static readonly TimeSpan ForegroundPollInterval = TimeSpan.FromMilliseconds(400);
     // A window joins a group when the intersection covers this fraction of the smaller of the two rects — min (not union) so a small window sitting on top of a big one still counts as "mostly overlapping".
     private const double GroupOverlapThreshold = 0.5;
     private static readonly TimeSpan PreviewMaxAge = TimeSpan.FromSeconds(15);
@@ -67,6 +69,9 @@ public partial class MainWindow : Window
         LayoutItems.ItemsSource = groups;
         LogList.ItemsSource = AppLog.Entries;
         SettingsGroups.ItemsSource = settingsGroups;
+        BuildVersionRun.Text = $"TabDesktop v{AppInfo.Version}";
+        BuildTimeRun.Text = $" ({AppInfo.BuiltAtUtc?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "unknown"})";
+        RebuildRestartButton.Visibility = TabStripWindow.CanRebuildRestart ? Visibility.Visible : Visibility.Collapsed;
         AdvancedModeCheck.IsChecked = AppSettings.AdvancedMode;
         ShowWhenFullscreenCheck.IsChecked = AppSettings.ShowWhenFullscreen;
         RunOnStartupCheck.IsChecked = Installer.IsAutoStartEnabled();
@@ -86,9 +91,14 @@ public partial class MainWindow : Window
         });
         ExtensionThumbnails.Updated += refreshDerived;
         ThumbnailWhitelist.Changed += refreshDerived;
+        // Rebuild the expanded-tab layout the moment the browser confirms a tab change (activate/move/close), so dragging a tab in the strip snaps into place instead of waiting out the refresh tick.
+        ExtensionThumbnails.TabsChanged += () => Dispatcher.BeginInvoke(RecomputeGroups);
         refreshTimer = new DispatcherTimer { Interval = RefreshInterval };
         refreshTimer.Tick += (_, _) => RefreshWindows();
         refreshTimer.Start();
+        var foregroundPollTimer = new DispatcherTimer { Interval = ForegroundPollInterval };
+        foregroundPollTimer.Tick += (_, _) => FastPollForeground();
+        foregroundPollTimer.Start();
         idleFadeTimer = new DispatcherTimer { Interval = IdleFadeRefreshInterval };
         idleFadeTimer.Tick += (_, _) => UpdateIdleOpacity();
         idleFadeTimer.Start();
@@ -230,6 +240,29 @@ public partial class MainWindow : Window
         }
 
         UpdateWorkerTab();
+    }
+
+    // GatherBasics reads only user32-cached state, so unlike the worker-pool polls this is safe on the UI thread even against a hung process. ApplyResults (and the group recompute behind it) only runs when the rect actually changed, so an idle foreground window costs two cheap native calls per tick.
+    private void FastPollForeground()
+    {
+        IntPtr foreground = NativeMethods.GetForegroundWindow();
+        if (!entriesByHwnd.TryGetValue(foreground, out WindowEntry? entry))
+        {
+            return;
+        }
+        WindowData? data = WindowScanner.GatherBasics(foreground);
+        if (data is null || data.IsMinimized)
+        {
+            return;
+        }
+        double screenLeft = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+        double screenTop = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+        bool moved = entry.CanvasLeft != data.Left - screenLeft || entry.CanvasTop != data.Top - screenTop || entry.LayoutWidth != data.Width || entry.LayoutHeight != data.Height;
+        if (!moved)
+        {
+            return;
+        }
+        ApplyResults(new List<WindowData> { data });
     }
 
     private void UpdateWorkerTab()

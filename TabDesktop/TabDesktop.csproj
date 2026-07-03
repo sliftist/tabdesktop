@@ -6,7 +6,14 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Version mirrors package.json so releases and the Settings tab agree without a second bump site. -->
+    <Version>$([System.Text.RegularExpressions.Regex]::Replace($([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\package.json')), '(?s).*"version":\s*"([^"]+)".*', '$1'))</Version>
   </PropertyGroup>
+
+  <!-- Baked into the assembly (rather than reading the exe's mtime) so the time survives the exe being copied or downloaded. Costs a relink on otherwise-no-op builds, which this project doesn't care about. -->
+  <ItemGroup>
+    <AssemblyMetadata Include="BuildTimeUtc" Value="$([System.DateTime]::UtcNow.ToString('o'))" />
+  </ItemGroup>
 
   <!-- Only applied by `dotnet publish` (the SDK sets _IsPublishing there), so normal builds/runs stay framework-dependent and fast. Self-contained because target machines won't have the runtime installed. -->
   <PropertyGroup Condition="'$(_IsPublishing)' == 'true'">

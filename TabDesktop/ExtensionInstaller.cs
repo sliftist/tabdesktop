@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace TabDesktop;
@@ -23,7 +24,17 @@ public static class ExtensionInstaller
         Directory.CreateDirectory(DeployDir);
         foreach (string file in Directory.GetFiles(SourceDir))
         {
-            File.Copy(file, Path.Combine(DeployDir, Path.GetFileName(file)), overwrite: true);
+            string target = Path.Combine(DeployDir, Path.GetFileName(file));
+            if (Path.GetFileName(file) == "manifest.json")
+            {
+                // The extension carries the app's own version, so the extensions page always shows which build deployed it.
+                string json = Regex.Replace(File.ReadAllText(file), "\"version\":\\s*\"[^\"]*\"", $"\"version\": \"{AppInfo.Version}\"");
+                File.WriteAllText(target, json);
+            }
+            else
+            {
+                File.Copy(file, target, overwrite: true);
+            }
         }
     }
 

@@ -145,7 +145,7 @@
                     <Button Content="⌂" FontSize="12" Click="OnShowMain" ToolTip="Focus and center the TabDesktop window" />
                 </StackPanel>
                 <StackPanel x:Name="AdvancedButtons" Width="32" VerticalAlignment="Center">
-                    <Button Content="⟳" FontSize="14" Click="OnRebuildRestart" ToolTip="Close, rebuild, and restart TabDesktop" />
+                    <Button x:Name="RebuildButton" Content="⟳" FontSize="14" Click="OnRebuildRestart" ToolTip="Close, rebuild, and restart TabDesktop" />
                     <Button x:Name="ExtensionButton" Click="OnInstallExtension" ToolTip="Install the browser extension — video thumbnails straight from your tabs, including logged-in sites">
                         <Border x:Name="ExtensionIconChip" CornerRadius="3" Padding="2,0" Background="Transparent">
                             <Viewbox x:Name="ExtensionIcon" Width="13" Height="13" Opacity="0.4">

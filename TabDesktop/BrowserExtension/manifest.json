@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TabDesktop Video Thumbnails",
-  "version": "1.0.0",
+  "version": "0.1.2",
   "description": "Sends the current tab's video thumbnail to the TabDesktop app on this machine (talks only to 127.0.0.1).",
   "background": { "service_worker": "background.js" },
   "permissions": ["tabs"],
