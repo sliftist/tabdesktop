@@ -7,7 +7,6 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
-using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 using TabDesktop.Interop;
@@ -41,8 +40,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<GroupRow> settingsGroups = new();
     private ExtensionInstallWindow? installWindow;
     private SearchWindow? searchWindow;
-    private HwndSource? hwndSource;
-    private const int SearchHotkeyId = 1;
+    private GlobalHotkey? searchHotkey;
     private readonly List<TabStripWindow> tabStrips = new();
     private readonly Dictionary<IntPtr, long> previewCapturedAt = new();
     private IntPtr lastForeground;
@@ -82,13 +80,7 @@ public partial class MainWindow : Window
         SearchEnabledCheck.IsChecked = AppSettings.SearchEnabled;
         SearchHotkeyBox.Text = AppSettings.SearchHotkey;
         RunOnStartupCheck.IsChecked = Installer.IsAutoStartEnabled();
-        // The global hotkey needs a win32 window handle; it registers against this window's message loop, which exists for the app's whole lifetime even while hidden.
-        SourceInitialized += (_, _) =>
-        {
-            hwndSource = (HwndSource?)PresentationSource.FromVisual(this);
-            hwndSource?.AddHook(OnWindowMessage);
-            ApplySearchHotkey();
-        };
+        ApplySearchHotkey();
         // Strips re-read AdvancedMode inside their layout pass; a full refresh pushes the change to every strip immediately.
         AppSettings.Changed += () => Dispatcher.BeginInvoke(RefreshWindows);
         // Extension reports and whitelist toggles happen off the UI thread; re-raise the derived bindings so tabs pick up new thumbnails and toggle states.
@@ -413,8 +405,11 @@ public partial class MainWindow : Window
 
     private void SyncSettingsGroups()
     {
+        // Same >=2 filter as the rows below, so the header counts exactly what's listed.
+        List<WindowGroup> stripGroups = groups.Where(g => g.Members.Count >= 2).ToList();
+        TabGroupsHeader.Text = $"Tab groups ({stripGroups.Count} groups | {stripGroups.Sum(g => g.Members.Count)} tabs)";
         var unmatched = new List<GroupRow>(settingsGroups);
-        foreach (WindowGroup group in groups.Where(g => g.Members.Count >= 2))
+        foreach (WindowGroup group in stripGroups)
         {
             var hwnds = group.Members.Select(m => m.Hwnd).ToHashSet();
             GroupRow? best = null;
@@ -480,9 +475,17 @@ public partial class MainWindow : Window
         ApplySearchHotkey();
     }
 
+    private static readonly Brush HotkeyErrorBrush = new SolidColorBrush(Color.FromArgb(0xCC, 0xCC, 0x00, 0x00));
+
+    // Fallback for when the keyboard hook couldn't install: WPF-visible combos still capture, though shell-owned ones (Win+A) never reach the app this way.
     private void OnSearchHotkeyBoxKeyDown(object sender, KeyEventArgs e)
     {
         e.Handled = true;
+        if (e.Key == Key.Escape)
+        {
+            Keyboard.ClearFocus();
+            return;
+        }
         HotkeyCombo? combo = HotkeyCombo.FromKeyEvent(e);
         if (combo is null)
         {
@@ -493,39 +496,67 @@ public partial class MainWindow : Window
         ApplySearchHotkey();
     }
 
-    private IntPtr OnWindowMessage(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    // While the box is focused the hook swallows every keystroke system-wide and feeds it here — the only way shell-owned combos like Win+A can be captured instead of opening Quick Settings.
+    private void OnSearchHotkeyBoxGotFocus(object sender, KeyboardFocusChangedEventArgs e)
     {
-        if (msg == NativeMethods.WM_HOTKEY && wParam.ToInt32() == SearchHotkeyId)
+        EnsureSearchHotkeyHook();
+        if (!searchHotkey!.IsInstalled)
         {
-            ToggleSearchWindow();
-            handled = true;
+            return;
         }
-        return IntPtr.Zero;
+        SearchHotkeyStatus.Foreground = Brushes.Gray;
+        SearchHotkeyStatus.Text = "Press the key combination you want — Esc or click elsewhere to finish";
+        searchHotkey.BeginCapture(
+            combo => Dispatcher.BeginInvoke(() =>
+            {
+                SearchHotkeyBox.Text = combo.ToString();
+                AppSettings.SetSearchHotkey(combo.ToString());
+            }),
+            () => Dispatcher.BeginInvoke(Keyboard.ClearFocus));
+    }
+
+    private void OnSearchHotkeyBoxLostFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        searchHotkey?.EndCapture();
+        ApplySearchHotkey();
     }
 
     private void ApplySearchHotkey()
     {
-        if (hwndSource is null)
-        {
-            return;
-        }
-        NativeMethods.UnregisterHotKey(hwndSource.Handle, SearchHotkeyId);
+        SearchHotkeyStatus.Foreground = HotkeyErrorBrush;
         SearchHotkeyStatus.Text = "";
-        if (!AppSettings.SearchEnabled)
-        {
-            return;
-        }
-        HotkeyCombo? combo = HotkeyCombo.TryParse(AppSettings.SearchHotkey);
+        HotkeyCombo? combo = AppSettings.SearchEnabled ? HotkeyCombo.TryParse(AppSettings.SearchHotkey) : null;
         if (combo is null)
         {
-            SearchHotkeyStatus.Text = "Unrecognized hotkey — click the box and press a new combination";
+            if (AppSettings.SearchEnabled)
+            {
+                SearchHotkeyStatus.Text = "Unrecognized hotkey — click the box and press a new combination";
+            }
+            // The hook intercepts every keystroke system-wide, so it only exists while a hotkey is wanted or the capture box is in use.
+            if (searchHotkey is not null && !searchHotkey.IsCapturing)
+            {
+                searchHotkey.Dispose();
+                searchHotkey = null;
+            }
+            else
+            {
+                searchHotkey?.SetCombo(null);
+            }
             return;
         }
-        if (!NativeMethods.RegisterHotKey(hwndSource.Handle, SearchHotkeyId, combo.ModifierFlags | NativeMethods.MOD_NOREPEAT, combo.VirtualKey))
+        EnsureSearchHotkeyHook();
+        searchHotkey!.SetCombo(combo);
+        if (!searchHotkey.IsInstalled)
         {
-            SearchHotkeyStatus.Text = $"Couldn't register {combo} — it may be reserved by Windows or in use by another app";
+            SearchHotkeyStatus.Text = "Couldn't install the keyboard hook — the hotkey won't work";
             AppLog.Write(nameof(MainWindow), SearchHotkeyStatus.Text);
         }
+    }
+
+    private void EnsureSearchHotkeyHook()
+    {
+        // The hook callback fires mid-keystroke and must return immediately; the actual toggle runs on the next dispatcher pass.
+        searchHotkey ??= new GlobalHotkey(() => Dispatcher.BeginInvoke(ToggleSearchWindow));
     }
 
     // Non-modal singleton, same pattern as the extension-install window; pressing the hotkey again dismisses it.

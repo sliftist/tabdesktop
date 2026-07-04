@@ -30,12 +30,25 @@ internal static class NativeMethods
     public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
     public const uint GW_OWNER = 4;
-    public const int WM_HOTKEY = 0x0312;
-    public const uint MOD_ALT = 0x0001;
-    public const uint MOD_CONTROL = 0x0002;
-    public const uint MOD_SHIFT = 0x0004;
-    public const uint MOD_WIN = 0x0008;
-    public const uint MOD_NOREPEAT = 0x4000;
+    public const int WH_KEYBOARD_LL = 13;
+    public const int WM_KEYDOWN = 0x0100;
+    public const int WM_KEYUP = 0x0101;
+    public const int WM_SYSKEYDOWN = 0x0104;
+    public const int WM_SYSKEYUP = 0x0105;
+    public const int VK_ESCAPE = 0x1B;
+    public const uint LLKHF_INJECTED = 0x10;
+    public const int VK_SHIFT = 0x10;
+    public const int VK_CONTROL = 0x11;
+    public const int VK_MENU = 0x12;
+    public const int VK_LWIN = 0x5B;
+    public const int VK_RWIN = 0x5C;
+    public const int VK_LSHIFT = 0xA0;
+    public const int VK_RSHIFT = 0xA1;
+    public const int VK_LCONTROL = 0xA2;
+    public const int VK_RCONTROL = 0xA3;
+    public const int VK_LMENU = 0xA4;
+    public const int VK_RMENU = 0xA5;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT
@@ -203,9 +216,42 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct KBDLLHOOKSTRUCT
+    {
+        public uint vkCode;
+        public uint scanCode;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
     [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint vk);
+    public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc proc, IntPtr module, uint threadId);
 
     [DllImport("user32.dll")]
-    public static extern bool UnregisterHotKey(IntPtr hwnd, int id);
+    public static extern bool UnhookWindowsHookEx(IntPtr hook);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr CallNextHookEx(IntPtr hook, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetModuleHandle(string? moduleName);
+
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int vk);
+
+    [DllImport("user32.dll")]
+    public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extraInfo);
+
+    [DllImport("user32.dll")]
+    public static extern bool AttachThreadInput(uint attachThread, uint attachToThread, bool attach);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hwnd);
 }

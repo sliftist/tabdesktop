@@ -15,6 +15,8 @@ public partial class SearchWindow : Window
     private readonly Action<WindowEntry> activateRequested;
     private List<SearchResult> results = new();
     private int selectedIndex = -1;
+    private bool dismissed;
+    private bool everActivated;
 
     public SearchWindow(Func<List<WindowEntry>> getEntries, Action<WindowEntry> activateRequested)
     {
@@ -30,12 +32,55 @@ public partial class SearchWindow : Window
         };
         Loaded += (_, _) =>
         {
+            ForceForeground();
             QueryBox.Focus();
             RefreshResults();
         };
-        // A palette that lingers after clicking elsewhere is just clutter; losing focus dismisses it like the Windows search flyout.
-        Deactivated += (_, _) => Close();
+        Activated += (_, _) => everActivated = true;
+        // A palette that lingers after clicking elsewhere is just clutter; losing focus dismisses it like the Windows search flyout. Gated on having actually been activated: opened from the keyboard hook the process has no foreground-activation grant (unlike RegisterHotKey), and without the gate a failed activation would fire Deactivated and close the window the instant it appears.
+        Deactivated += (_, _) =>
+        {
+            if (everActivated)
+            {
+                Dismiss();
+            }
+        };
+        // Closing itself deactivates the window, so the Deactivated handler re-enters Close mid-close and WPF throws; Closing marks the window dismissed first so that re-entry no-ops. Covers external Close() calls (the hotkey toggle) too.
+        Closing += (_, _) => dismissed = true;
         SizeChanged += (_, _) => CenterOnVirtualScreen();
+    }
+
+    private void Dismiss()
+    {
+        if (dismissed)
+        {
+            return;
+        }
+        dismissed = true;
+        Close();
+    }
+
+    // SetForegroundWindow refuses callers that didn't receive the last input, and a keyboard-hook callback doesn't count as receiving input; temporarily attaching to the current foreground window's input queue borrows its right to take focus — the standard launcher-palette trick.
+    private void ForceForeground()
+    {
+        IntPtr handle = new WindowInteropHelper(this).Handle;
+        IntPtr foreground = NativeMethods.GetForegroundWindow();
+        uint ourThread = NativeMethods.GetCurrentThreadId();
+        uint foregroundThread = foreground != IntPtr.Zero ? NativeMethods.GetWindowThreadProcessId(foreground, out _) : 0;
+        bool attached = foregroundThread != 0 && foregroundThread != ourThread && NativeMethods.AttachThreadInput(foregroundThread, ourThread, true);
+        try
+        {
+            NativeMethods.BringWindowToTop(handle);
+            NativeMethods.SetForegroundWindow(handle);
+            Activate();
+        }
+        finally
+        {
+            if (attached)
+            {
+                NativeMethods.AttachThreadInput(foregroundThread, ourThread, false);
+            }
+        }
     }
 
     private void CenterOnVirtualScreen()
@@ -84,7 +129,7 @@ public partial class SearchWindow : Window
         switch (key)
         {
             case Key.Escape:
-                Close();
+                Dismiss();
                 e.Handled = true;
                 break;
             case Key.Enter:
@@ -113,7 +158,7 @@ public partial class SearchWindow : Window
             return;
         }
         WindowEntry entry = results[selectedIndex].Entry;
-        Close();
+        Dismiss();
         activateRequested(entry);
     }
 
@@ -121,7 +166,7 @@ public partial class SearchWindow : Window
     {
         if (sender is FrameworkElement element && element.DataContext is SearchResult result)
         {
-            Close();
+            Dismiss();
             activateRequested(result.Entry);
             e.Handled = true;
         }

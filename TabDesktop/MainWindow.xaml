@@ -17,8 +17,8 @@
                     <CheckBox x:Name="SearchEnabledCheck" Content="Enable search — a global hotkey opens a search box over all tabs; type, then Enter to jump to the selected tab" Checked="OnSearchEnabledChanged" Unchecked="OnSearchEnabledChanged" Margin="0,0,0,4" />
                     <StackPanel Orientation="Horizontal" Margin="22,0,0,8">
                         <TextBlock Text="Hotkey:  " VerticalAlignment="Center" />
-                        <TextBox x:Name="SearchHotkeyBox" Width="160" IsReadOnly="True" PreviewKeyDown="OnSearchHotkeyBoxKeyDown" ToolTip="Click here, then press the key combination you want" />
-                        <TextBlock x:Name="SearchHotkeyStatus" Margin="8,0,0,0" VerticalAlignment="Center" Foreground="#CCCC0000" />
+                        <TextBox x:Name="SearchHotkeyBox" Width="160" IsReadOnly="True" PreviewKeyDown="OnSearchHotkeyBoxKeyDown" GotKeyboardFocus="OnSearchHotkeyBoxGotFocus" LostKeyboardFocus="OnSearchHotkeyBoxLostFocus" ToolTip="Click here, then press the key combination you want — Esc or click elsewhere to finish" />
+                        <TextBlock x:Name="SearchHotkeyStatus" Margin="8,0,0,0" VerticalAlignment="Center" />
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
                         <Button x:Name="InstallAppButton" Content="Install TabDesktop" Padding="10,4" Click="OnInstallApp" ToolTip="Copies the app into your user programs folder, adds it to the Start Menu and Add/Remove Programs, and turns on run-on-startup — the exe you launched can stay where it is" />
@@ -31,7 +31,7 @@
                         <Button x:Name="RebuildRestartButton" Content="Rebuild and restart TabDesktop" Padding="10,4" Margin="8,0,0,0" Click="OnRebuildRestartClick" />
                     </StackPanel>
 
-                    <TextBlock Text="Tab strip groups" FontWeight="Bold" FontSize="14" Margin="0,4,0,4" />
+                    <TextBlock x:Name="TabGroupsHeader" Text="Tab groups" FontWeight="Bold" FontSize="14" Margin="0,4,0,4" />
                     <ItemsControl x:Name="SettingsGroups" Margin="0,0,0,16">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>

@@ -1,10 +1,10 @@
 {
     "name": "tabdesktop",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "private": true,
     "scripts": {
         "build": "node scripts/dotnet.js build TabDesktop",
-        "build-claude": "node scripts/dotnet.js build TabDesktop -o TabDesktop/bin/claude-check",
+        "build-claude": "node scripts/dotnet.js build TabDesktop/TabDesktop.csproj -o TabDesktop/bin/claude-check",
         "bundle-claude": "node scripts/dotnet.js publish TabDesktop -c Release -o TabDesktop/bin/claude-publish",
         "start": "node scripts/dotnet.js run --project TabDesktop",
         "release": "node scripts/publish-release.js",

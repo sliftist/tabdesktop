@@ -1,16 +1,11 @@
 using System.Windows.Input;
-using TabDesktop.Interop;
 
 namespace TabDesktop;
 
 // A global-hotkey combination, persisted as text like "Win+A" or "Ctrl+Shift+F2".
 public sealed record HotkeyCombo(bool Win, bool Ctrl, bool Alt, bool Shift, Key Key)
 {
-    public uint ModifierFlags =>
-        (Win ? NativeMethods.MOD_WIN : 0)
-        | (Ctrl ? NativeMethods.MOD_CONTROL : 0)
-        | (Alt ? NativeMethods.MOD_ALT : 0)
-        | (Shift ? NativeMethods.MOD_SHIFT : 0);
+    public bool HasModifier => Win || Ctrl || Alt || Shift;
 
     public uint VirtualKey => (uint)KeyInterop.VirtualKeyFromKey(Key);
 
@@ -59,18 +54,23 @@ public sealed record HotkeyCombo(bool Win, bool Ctrl, bool Alt, bool Shift, Key 
         return new HotkeyCombo(win, ctrl, alt, shift, key.Value);
     }
 
-    // Builds the combo the user is pressing in the capture box; null while only modifiers are down, and for bare non-function keys — a global hotkey without a modifier would swallow ordinary typing system-wide.
-    public static HotkeyCombo? FromKeyEvent(KeyEventArgs e)
+    // Builds the combo the user is pressing during capture; null while only modifiers are down, and for bare non-function keys — a global hotkey without a modifier would swallow ordinary typing system-wide.
+    public static HotkeyCombo? FromPressedKey(Key key, bool win, bool ctrl, bool alt, bool shift)
     {
-        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key is Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift or Key.LWin or Key.RWin or Key.None)
         {
             return null;
         }
-        ModifierKeys mods = Keyboard.Modifiers;
-        var combo = new HotkeyCombo(mods.HasFlag(ModifierKeys.Windows), mods.HasFlag(ModifierKeys.Control), mods.HasFlag(ModifierKeys.Alt), mods.HasFlag(ModifierKeys.Shift), key);
+        var combo = new HotkeyCombo(win, ctrl, alt, shift, key);
         bool functionKey = key >= Key.F1 && key <= Key.F24;
-        if (combo.ModifierFlags == 0 && !functionKey) return null;
+        if (!combo.HasModifier && !functionKey) return null;
         return combo;
+    }
+
+    public static HotkeyCombo? FromKeyEvent(KeyEventArgs e)
+    {
+        Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+        ModifierKeys mods = Keyboard.Modifiers;
+        return FromPressedKey(key, mods.HasFlag(ModifierKeys.Windows), mods.HasFlag(ModifierKeys.Control), mods.HasFlag(ModifierKeys.Alt), mods.HasFlag(ModifierKeys.Shift));
     }
 }
