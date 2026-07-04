@@ -1,6 +1,6 @@
-Bug Fixes
+## Features
 
-### Long lists in Settings stretch the whole page
-- Expand a group's window list or the saved right-click state browser when it contains many entries.
-- The expanded list grew to its full length, stretching the entire Settings page and forcing you to scroll past hundreds of rows to reach the sections below.
-- Expanded sections are now capped to 80% of the window height and scroll within their own area, keeping the rest of the Settings page reachable. The saved-state search box stays pinned above its list while the results scroll.
+### Release Notes Generation
+
+- Improves the formatting and accuracy of the release notes published with each version, so GitHub releases now consistently describe changes from a user's perspective.
+- Changes the release notes template so all formatting rules are enforced as binding instructions, including omitting empty sections instead of showing placeholders.

@@ -86,7 +86,9 @@ async function generateReleaseNotes(tag, previousTag) {
     const template = fs.readFileSync(releaseNotesSpecPath, "utf8");
     const prompt = [
         `You are writing GitHub release notes for TabDesktop ${tag}, a Windows desktop app that shows tab strips above groups of overlapping windows.`,
-        `Below are the commits and the full git diff since ${previousTag ?? "the beginning of the repo"}. Write the release notes following this template exactly — same sections, same structure — rendered as GitHub-flavored markdown (section headings, a subheading per feature/fix, bullet lists). Omit a section entirely if there is nothing for it. Describe changes as a user would experience them, most important first; skip internal refactors, build tooling, and version-bump noise unless they matter to users.`,
+        `Below are the commits and the full git diff since ${previousTag ?? "the beginning of the repo"}. Write the release notes following this template exactly — same sections, same structure — rendered as GitHub-flavored markdown (section headings, a subheading per feature/fix, bullet lists). Describe changes as a user would experience them, most important first; skip internal refactors, build tooling, and version-bump noise unless they matter to users.`,
+        "",
+        `The template below is not just a shape — every instruction written inside it (parenthetical notes, guidance about how many points to use, what each point should contain, etc.) is a binding requirement you must follow. In addition: if a section has no content for this release (e.g. no bug fixes), omit that section entirely — do not output its heading, and never write placeholders like "None" or "N/A".`,
         "",
         "Template:",
         template,

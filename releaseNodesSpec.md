@@ -1,3 +1,9 @@
+INSTRUCTION: Only add the section if there's actually values in the section. Don't add empty sections. 
+INSTRUCTION: Do not say the release notes are "AI generated". Do not advertise claude in the release notes.
+INSTRUCTION: The release notes need to describe what changed. Do not reference "the release" in the release notes.
+INSTRUCTION: The release notes should be phrased as "changes X". 
+INSTRUCTION: Add proper markdown formatting.
+
 Features
     Feature Name
         - Description
@@ -12,7 +18,3 @@ Bug Fixes
         - Consequence
         - Fix
     ...
-
-NOTE: Only add the section if there's actually values in the section. Don't add empty sections. 
-NOTE: Do not say the release notes are "AI generated". Do not advertise claude in the release notes.
-NOTE: The release notes need to describe what changed. Do not reference "the release" in the release notes.
