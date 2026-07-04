@@ -142,7 +142,8 @@ async function main() {
     fs.writeFileSync(releaseNotesPath, notes + "\n");
     await run("git", ["add", "RELEASE_NOTES.md"]);
 
-    await run("git", ["commit", "-m", `Release ${tag}`]);
+    // Subject stays the bare "Release vX.Y.Z" (tooling and history scans key off it); the notes ride along as the commit body.
+    await run("git", ["commit", "-m", `Release ${tag}`, "-m", notes]);
     await run("git", ["push"]);
     await run("git", ["tag", tag]);
     await run("git", ["push", "origin", tag]);
