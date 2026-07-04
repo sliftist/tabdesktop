@@ -26,6 +26,8 @@ Install the companion browser extension (from the app's Settings tab) and TabDes
 
 An opt-in global hotkey (default `Win+A`, changeable) pops up a search box centered on your screens:
 
+![Search](pictures/search.png)
+
 - Type to search across all tabs — results look exactly like the strip tabs, best matches first
 - `Enter` jumps to the selected result; arrow keys / `Tab` / `Shift+Tab` move the selection; `Esc` dismisses
 - Enable it in the Settings tab ("Enable search"), where you can also record a different hotkey — it can even take over shell shortcuts like `Win+A`

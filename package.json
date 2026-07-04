@@ -7,6 +7,7 @@
         "build-claude": "node scripts/dotnet.js build TabDesktop/TabDesktop.csproj -o TabDesktop/bin/claude-check",
         "bundle-claude": "node scripts/dotnet.js publish TabDesktop -c Release -o TabDesktop/bin/claude-publish",
         "start": "node scripts/dotnet.js run --project TabDesktop",
+        "commit-push": "node scripts/commit-push.js",
         "release": "node scripts/publish-release.js",
         "release-unsigned": "node scripts/publish-release.js --unsigned",
         "clean": "node scripts/dotnet.js clean TabDesktop"
