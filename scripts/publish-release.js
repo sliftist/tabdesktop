@@ -3,6 +3,10 @@ const fs = require("fs");
 const path = require("path");
 
 const packageJsonPath = path.join(__dirname, "..", "package.json");
+const releaseNotesPath = path.join(__dirname, "..", "RELEASE_NOTES.md");
+const releaseNotesSpecPath = path.join(__dirname, "..", "releaseNodesSpec.md");
+// Diffs beyond this are almost certainly generated/vendored noise; the head of the diff plus the file list is enough signal for notes.
+const maxDiffChars = 150000;
 
 function run(command, args) {
     return new Promise((resolve, reject) => {
@@ -35,6 +39,68 @@ function runQuiet(command, args) {
     });
 }
 
+// Runs headless Claude Code (claude -p). The whole prompt goes through stdin so no shell quoting is needed; shell: true is required on Windows because the CLI is a .cmd shim.
+function runClaude(input) {
+    return new Promise((resolve, reject) => {
+        const child = spawn("claude", ["-p"], { shell: true, stdio: ["pipe", "pipe", "pipe"] });
+        let output = "";
+        let errorOutput = "";
+        child.stdout.on("data", (chunk) => {
+            output += chunk;
+        });
+        child.stderr.on("data", (chunk) => {
+            errorOutput += chunk;
+        });
+        child.on("error", (err) => reject(err));
+        child.on("close", (code) => {
+            if (code !== 0) {
+                reject(new Error(`claude -p exited with code ${code}: ${errorOutput}`));
+                return;
+            }
+            resolve(output.trim());
+        });
+        child.stdin.write(input);
+        child.stdin.end();
+    });
+}
+
+async function getPreviousReleaseTag() {
+    const result = await runQuiet("git", ["tag", "--sort=-creatordate"]);
+    if (result.code !== 0) {
+        return undefined;
+    }
+    return result.output.split(/\r?\n/).map((t) => t.trim()).find((t) => /^(unsigned-)?v\d/.test(t));
+}
+
+// Commit messages here are just "Release vX.Y.Z" — all the real work lands in the release commit itself — so the notes come from the staged diff against the previous release tag. Must run after `git add -A` so new files are included.
+async function generateReleaseNotes(tag, previousTag) {
+    const log = (await runQuiet("git", ["log", "--oneline", previousTag ? `${previousTag}..HEAD` : "HEAD"])).output;
+    const diffArgs = ["diff", "--cached", "--no-color"];
+    if (previousTag) {
+        diffArgs.push(previousTag);
+    }
+    let diff = (await runQuiet("git", diffArgs)).output;
+    if (diff.length > maxDiffChars) {
+        diff = diff.slice(0, maxDiffChars) + "\n... (diff truncated)";
+    }
+    const template = fs.readFileSync(releaseNotesSpecPath, "utf8");
+    const prompt = [
+        `You are writing GitHub release notes for TabDesktop ${tag}, a Windows desktop app that shows tab strips above groups of overlapping windows.`,
+        `Below are the commits and the full git diff since ${previousTag ?? "the beginning of the repo"}. Write the release notes following this template exactly — same sections, same structure — rendered as GitHub-flavored markdown (section headings, a subheading per feature/fix, bullet lists). Omit a section entirely if there is nothing for it. Describe changes as a user would experience them, most important first; skip internal refactors, build tooling, and version-bump noise unless they matter to users.`,
+        "",
+        "Template:",
+        template,
+        "",
+        `Output only the markdown body — no title, no preamble, no surrounding code fence, and no AI attribution of any kind.`,
+        "",
+        "Commits:",
+        log,
+        "Diff:",
+        diff,
+    ].join("\n");
+    return await runClaude(prompt);
+}
+
 async function main() {
     // --unsigned tags unsigned-vX.Y.Z instead of vX.Y.Z, which triggers the signing-free Release (unsigned) workflow rather than the signed one.
     const unsigned = process.argv.includes("--unsigned");
@@ -61,6 +127,21 @@ async function main() {
     fs.writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 4) + "\n");
 
     await run("git", ["add", "-A"]);
+
+    // Notes generation uses the Claude Code subscription (headless claude -p), no API key. A failure falls back to the commit list so the release never blocks on it; the workflow attaches RELEASE_NOTES.md as the release body.
+    const previousTag = await getPreviousReleaseTag();
+    console.log(`Generating release notes with Claude (diff since ${previousTag ?? "the first commit"})...`);
+    let notes;
+    try {
+        notes = await generateReleaseNotes(tag, previousTag);
+    } catch (err) {
+        console.error(`Release-notes generation failed, falling back to the commit list:`, err.stack ?? err);
+        notes = (await runQuiet("git", ["log", "--oneline", previousTag ? `${previousTag}..HEAD` : "HEAD"])).output.trim() || "See the commit history for changes.";
+    }
+    console.log(`\n----- Release notes -----\n${notes}\n-------------------------\n`);
+    fs.writeFileSync(releaseNotesPath, notes + "\n");
+    await run("git", ["add", "RELEASE_NOTES.md"]);
+
     await run("git", ["commit", "-m", `Release ${tag}`]);
     await run("git", ["push"]);
     await run("git", ["tag", tag]);
