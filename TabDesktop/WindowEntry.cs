@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -19,6 +20,7 @@ public sealed class WindowEntry : INotifyPropertyChanged
         {
             if (Set(ref title, value))
             {
+                titleChangedAt = Stopwatch.GetTimestamp();
                 RefreshDerived();
             }
         }
@@ -40,8 +42,30 @@ public sealed class WindowEntry : INotifyPropertyChanged
 
     public string DisplayTitle => directoryTitle ?? TitleRules.Simplify(title);
 
-    // Extension-pushed thumbnails (exact, auth-aware, any site) win over the History-based YouTube fallback; for screenshot-whitelisted executables the focused-window capture stands in.
-    public ImageSource? VideoThumbnail => ExtensionThumbnails.TryGet(title) ?? YouTubeThumbnail.TryGet(title, NotifyIconResolved) ?? (IsScreenshotThumbnailEnabled ? thumbnail : null);
+    // Every thumbnail source is keyed by the window title and returns null while it re-resolves asynchronously, so a page-load title change would otherwise flash the tile back to the favicon for a few seconds even though a thumbnail is about to arrive. Long enough to cover an extension report cycle plus slack; after that a genuinely thumbnail-less page falls back to its icon.
+    private static readonly TimeSpan StaleThumbnailHold = TimeSpan.FromSeconds(20);
+    private ImageSource? lastVideoThumbnail;
+    private long titleChangedAt;
+
+    // Extension-pushed thumbnails (exact, auth-aware, any site) win over the History-based YouTube fallback; for screenshot-whitelisted executables the focused-window capture stands in. While all sources are still resolving shortly after a title change, the previous thumbnail keeps showing (stale-while-revalidate, same as favicons).
+    public ImageSource? VideoThumbnail
+    {
+        get
+        {
+            ImageSource? fresh = ExtensionThumbnails.TryGet(title) ?? YouTubeThumbnail.TryGet(title, NotifyIconResolved) ?? (IsScreenshotThumbnailEnabled ? thumbnail : null);
+            if (fresh is not null)
+            {
+                lastVideoThumbnail = fresh;
+                return fresh;
+            }
+            if (lastVideoThumbnail is not null && titleChangedAt != 0 && Stopwatch.GetElapsedTime(titleChangedAt) < StaleThumbnailHold)
+            {
+                return lastVideoThumbnail;
+            }
+            lastVideoThumbnail = null;
+            return null;
+        }
+    }
 
     public bool IsBrowserTab => BrowserFavicon.GetPageTitle(title) is not null;
 

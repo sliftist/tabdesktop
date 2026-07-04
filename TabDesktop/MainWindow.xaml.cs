@@ -33,6 +33,13 @@ public partial class MainWindow : Window
     private static readonly TimeSpan InstallFeedbackDuration = TimeSpan.FromSeconds(1.5);
     // Expanded browser-tab entries slot between their parent and the next real window without disturbing persisted order keys.
     private const double BrowserTabOrderStep = 0.001;
+    // Keeps the Thumbnails tab responsive against a 100k-row snapshot: only this many matches render (and decode images) at once.
+    private const int MaxThumbnailResults = 200;
+
+    private List<ThumbnailRow>? thumbnailRows;
+    private bool thumbnailRefreshRunning;
+    private int thumbnailSnapshotDiskVersion = -1;
+    private int thumbnailSnapshotUrlsVersion = -1;
 
     private readonly ObservableCollection<WindowEntry> windows = new();
     private readonly ObservableCollection<WindowGroup> groups = new();
@@ -246,6 +253,7 @@ public partial class MainWindow : Window
         }
 
         UpdateWorkerTab();
+        UpdateThumbnailStaleness();
     }
 
     // GatherBasics reads only user32-cached state, so unlike the worker-pool polls this is safe on the UI thread even against a hung process. ApplyResults (and the group recompute behind it) only runs when the rect actually changed, so an idle foreground window costs two cheap native calls per tick.
@@ -589,6 +597,26 @@ public partial class MainWindow : Window
             ExtensionThumbnails.ActivateTab(entry.BrowserTab);
         }
         FocusWindow(entry.Hwnd);
+        PredictFocus(entry);
+    }
+
+    // An explicit activation reliably ends with that window foreground, but the scanner only notices on its next poll — waiting for it makes clicks feel sluggish. Apply the expected state immediately; the poll converges to reality if the activation actually failed. lastForeground is deliberately left alone so the poll still treats this as a focus change and captures a fresh preview.
+    private void PredictFocus(WindowEntry entry)
+    {
+        long now = Stopwatch.GetTimestamp();
+        foreach (WindowEntry window in windows)
+        {
+            window.IsForeground = window.Hwnd == entry.Hwnd;
+        }
+        if (entriesByHwnd.TryGetValue(entry.Hwnd, out WindowEntry? parent))
+        {
+            parent.LastFocusedAt = now;
+            parent.IdleOpacity = 1;
+        }
+        entry.LastFocusedAt = now;
+        entry.IdleOpacity = 1;
+        // Recomputing rederives IsGroupLastFocused from the bumped focus time and, for expanded windows, rebuilds the tab entries from the optimistically switched active-tab flags.
+        RecomputeGroups();
     }
 
     private void OnRunOnStartupChanged(object sender, RoutedEventArgs e)
@@ -706,6 +734,186 @@ public partial class MainWindow : Window
     }
 
     private sealed record SavedStateRow(string Category, string Value, Action Remove);
+
+    // SelectionChanged bubbles from every inner ListView too, so only react to the TabControl's own selection.
+    private void OnMainTabChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!ReferenceEquals(e.Source, MainTabs))
+        {
+            return;
+        }
+        if (ThumbnailsTab.IsSelected)
+        {
+            RefreshThumbnailRows();
+        }
+    }
+
+    // Filtering the in-memory snapshot is instant; the rebuild (when needed) lands afterwards and re-applies the filter.
+    private void OnThumbnailSearch(object sender, TextChangedEventArgs e)
+    {
+        ApplyThumbnailFilter();
+        if (IsThumbnailSnapshotStale())
+        {
+            RefreshThumbnailRows();
+        }
+    }
+
+    private void OnThumbnailRefresh(object sender, RoutedEventArgs e)
+    {
+        RefreshThumbnailRows();
+    }
+
+    private bool IsThumbnailSnapshotStale()
+    {
+        return thumbnailSnapshotDiskVersion != ThumbnailDiskCache.Version || thumbnailSnapshotUrlsVersion != ExtensionThumbnails.SavedUrlsVersion;
+    }
+
+    // Piggybacks on the 2 s refresh tick so the indicator appears without user action while the tab sits open.
+    private void UpdateThumbnailStaleness()
+    {
+        ThumbnailStaleText.Visibility = thumbnailRows is not null && IsThumbnailSnapshotStale() ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    // The join of the persisted title→URL map with the on-disk cache can span 100k files, so the snapshot builds off-thread; search keystrokes filter the in-memory snapshot only, with staleness tracked via the sources' version counters.
+    private void RefreshThumbnailRows()
+    {
+        if (thumbnailRefreshRunning)
+        {
+            return;
+        }
+        thumbnailRefreshRunning = true;
+        // Versions are captured before the data reads, so a write racing the rebuild still leaves the new snapshot marked stale.
+        int diskVersion = ThumbnailDiskCache.Version;
+        int urlsVersion = ExtensionThumbnails.SavedUrlsVersion;
+        List<(string Title, string? Url)> titleUrls = ExtensionThumbnails.SnapshotSavedUrls();
+        Task.Run(() =>
+        {
+            try
+            {
+                List<ThumbnailDiskCache.SavedThumbnail> files = ThumbnailDiskCache.ListSaved();
+                var byHash = new Dictionary<string, ThumbnailDiskCache.SavedThumbnail>();
+                foreach (ThumbnailDiskCache.SavedThumbnail file in files)
+                {
+                    byHash[file.Hash] = file;
+                }
+                var claimed = new HashSet<string>();
+                var rows = new List<ThumbnailRow>();
+                foreach ((string title, string? url) in titleUrls)
+                {
+                    ThumbnailDiskCache.SavedThumbnail? file = null;
+                    if (url is not null && byHash.TryGetValue(ThumbnailDiskCache.HashFor(url), out ThumbnailDiskCache.SavedThumbnail? matched))
+                    {
+                        file = matched;
+                        claimed.Add(matched.Hash);
+                    }
+                    rows.Add(new ThumbnailRow(title, url, file));
+                }
+                // Cache files whose URL is no longer in the title map (evicted titles, YouTube thumbnail URLs) still count as rows; the disk cache's URL index recovers their URL where it can.
+                foreach (ThumbnailDiskCache.SavedThumbnail file in files)
+                {
+                    if (!claimed.Contains(file.Hash))
+                    {
+                        rows.Add(new ThumbnailRow("", ThumbnailDiskCache.TryGetUrlForHash(file.Hash), file));
+                    }
+                }
+                rows.Sort((a, b) => b.LastUsedUtc.CompareTo(a.LastUsedUtc));
+                Dispatcher.BeginInvoke(() =>
+                {
+                    thumbnailRefreshRunning = false;
+                    thumbnailSnapshotDiskVersion = diskVersion;
+                    thumbnailSnapshotUrlsVersion = urlsVersion;
+                    thumbnailRows = rows;
+                    ApplyThumbnailFilter();
+                    UpdateThumbnailStaleness();
+                });
+            }
+            catch (Exception ex)
+            {
+                AppLog.Write(nameof(MainWindow), $"Thumbnail snapshot rebuild failed: {ex}");
+                Dispatcher.BeginInvoke(() => thumbnailRefreshRunning = false);
+            }
+        });
+    }
+
+    private void ApplyThumbnailFilter()
+    {
+        if (thumbnailRows is null)
+        {
+            return;
+        }
+        string query = ThumbnailSearchBox.Text.Trim();
+        List<ThumbnailRow> matched = query.Length == 0
+            ? thumbnailRows
+            : thumbnailRows.Where(r => r.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        List<ThumbnailRow> shown = matched.Take(MaxThumbnailResults).ToList();
+        ThumbnailList.ItemsSource = shown;
+        ThumbnailCountText.Text = shown.Count == matched.Count
+            ? $"{matched.Count} of {thumbnailRows.Count} rows"
+            : $"showing first {shown.Count} of {matched.Count} matches ({thumbnailRows.Count} rows)";
+        LoadThumbnailImages(shown);
+    }
+
+    // Images decode lazily for the rows actually shown (the result cap keeps this small); WPF marshals the resulting property-change notifications to the UI thread itself.
+    private void LoadThumbnailImages(List<ThumbnailRow> rows)
+    {
+        List<ThumbnailRow> missing = rows.Where(r => r.Image is null && r.FilePath is not null && !r.ImageLoadFailed).ToList();
+        if (missing.Count == 0)
+        {
+            return;
+        }
+        Task.Run(() =>
+        {
+            foreach (ThumbnailRow row in missing)
+            {
+                try
+                {
+                    row.Image = BrowserFavicon.DecodeImage(File.ReadAllBytes(row.FilePath!));
+                }
+                catch
+                {
+                    row.ImageLoadFailed = true;
+                }
+            }
+        });
+    }
+
+    private sealed class ThumbnailRow : INotifyPropertyChanged
+    {
+        public ThumbnailRow(string title, string? url, ThumbnailDiskCache.SavedThumbnail? file)
+        {
+            Title = title;
+            Url = url;
+            FilePath = file?.Path;
+            Hash = file?.Hash ?? (url is not null ? ThumbnailDiskCache.HashFor(url) : "");
+            LastUsedUtc = file?.LastUsedUtc ?? DateTime.MinValue;
+            LastUsedText = file is null ? "" : file.LastUsedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            SizeText = file is null ? "" : $"{file.SizeBytes / 1024.0:0.0} KB";
+            SearchText = string.Join("\n", Title, Url ?? "", Hash, LastUsedText, SizeText);
+        }
+
+        public string Title { get; }
+        public string? Url { get; }
+        public string? FilePath { get; }
+        public string Hash { get; }
+        public DateTime LastUsedUtc { get; }
+        public string LastUsedText { get; }
+        public string SizeText { get; }
+        public string SearchText { get; }
+        public bool ImageLoadFailed;
+
+        private ImageSource? image;
+        public ImageSource? Image
+        {
+            get => image;
+            set
+            {
+                image = value;
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Image)));
+            }
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+    }
 
     private sealed class GroupRow : INotifyPropertyChanged
     {
@@ -1030,7 +1238,7 @@ public partial class MainWindow : Window
             }
             if (best is null)
             {
-                best = new TabStripWindow(FocusWindow, ReorderTab, ShowMainWindow, ToggleDirectoryTitle, ToggleExpandTabs);
+                best = new TabStripWindow(ActivateEntry, ReorderTab, ShowMainWindow, ToggleDirectoryTitle, ToggleExpandTabs);
                 tabStrips.Add(best);
                 best.Update(group, dpiScale);
                 best.Show();

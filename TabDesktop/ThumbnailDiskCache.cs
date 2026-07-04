@@ -16,6 +16,81 @@ public static class ThumbnailDiskCache
     // Frame-grab sources re-report the same URL every cycle; skip rewrites while the stored copy is fresh.
     private static readonly TimeSpan RewriteMinAge = TimeSpan.FromHours(1);
 
+    // Bumped on every write or prune so the Thumbnails tab can tell its snapshot is out of date. Loads touch mtime but don't count — treating a read as a change would leave the tab perpetually stale.
+    private static int version;
+    public static int Version => Volatile.Read(ref version);
+
+    // Files are named by URL hash, so without a side index the URLs of cached thumbnails would be unrecoverable — and both the fuzzy same-domain matcher and the Thumbnails tab need them. Plain one-URL-per-line append; URLs can't contain newlines.
+    private static readonly string UrlIndexPath = Path.Combine(CacheDir, "url-index.txt");
+    private static readonly object indexGate = new();
+    private static Dictionary<string, string>? urlByHash;
+
+    private static Dictionary<string, string> EnsureIndex()
+    {
+        lock (indexGate)
+        {
+            if (urlByHash is null)
+            {
+                urlByHash = new Dictionary<string, string>();
+                try
+                {
+                    if (File.Exists(UrlIndexPath))
+                    {
+                        foreach (string line in File.ReadLines(UrlIndexPath))
+                        {
+                            if (line.Length > 0)
+                            {
+                                urlByHash[HashFor(line)] = line;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLog.Write(nameof(ThumbnailDiskCache), ex.ToString());
+                }
+            }
+            return urlByHash;
+        }
+    }
+
+    private static void RecordUrl(string url)
+    {
+        lock (indexGate)
+        {
+            Dictionary<string, string> index = EnsureIndex();
+            string hash = HashFor(url);
+            if (index.ContainsKey(hash))
+            {
+                return;
+            }
+            index[hash] = url;
+            File.AppendAllText(UrlIndexPath, url + Environment.NewLine);
+        }
+    }
+
+    public static string? TryGetUrlForHash(string hash)
+    {
+        lock (indexGate)
+        {
+            return EnsureIndex().GetValueOrDefault(hash);
+        }
+    }
+
+    // May include URLs whose file has since been pruned — callers verify with HasSaved/TryLoad.
+    public static List<string> GetIndexedUrls()
+    {
+        lock (indexGate)
+        {
+            return EnsureIndex().Values.ToList();
+        }
+    }
+
+    public static bool HasSaved(string url)
+    {
+        return File.Exists(PathFor(url));
+    }
+
     public static ImageSource? TryLoad(string url)
     {
         try
@@ -41,6 +116,8 @@ public static class ThumbnailDiskCache
         try
         {
             Directory.CreateDirectory(CacheDir);
+            // Recorded even when the rewrite is skipped, so files saved before the index existed backfill as their URLs keep reporting.
+            RecordUrl(url);
             string path = PathFor(url);
             if (File.Exists(path) && DateTime.UtcNow - File.GetLastWriteTimeUtc(path) < RewriteMinAge)
             {
@@ -56,8 +133,11 @@ public static class ThumbnailDiskCache
             }
             var encoder = new JpegBitmapEncoder { QualityLevel = JpegQuality };
             encoder.Frames.Add(BitmapFrame.Create(source));
-            using FileStream output = File.Create(path);
-            encoder.Save(output);
+            using (FileStream output = File.Create(path))
+            {
+                encoder.Save(output);
+            }
+            Interlocked.Increment(ref version);
         }
         catch (Exception ex)
         {
@@ -85,6 +165,8 @@ public static class ThumbnailDiskCache
                 {
                     file.Delete();
                 }
+                Interlocked.Increment(ref version);
+                CompactIndex();
             }
             catch (Exception ex)
             {
@@ -93,8 +175,48 @@ public static class ThumbnailDiskCache
         });
     }
 
+    public sealed record SavedThumbnail(string Hash, string Path, DateTime LastUsedUtc, long SizeBytes);
+
+    // Everything on disk, for the Thumbnails browse tab. mtime doubles as last-used (touched on every load), so it's surfaced under that name rather than as a save date.
+    public static List<SavedThumbnail> ListSaved()
+    {
+        try
+        {
+            if (!Directory.Exists(CacheDir))
+            {
+                return new List<SavedThumbnail>();
+            }
+            return new DirectoryInfo(CacheDir).GetFiles("*.jpg")
+                .Select(f => new SavedThumbnail(Path.GetFileNameWithoutExtension(f.Name), f.FullName, f.LastWriteTimeUtc, f.Length))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(nameof(ThumbnailDiskCache), ex.ToString());
+            return new List<SavedThumbnail>();
+        }
+    }
+
+    // Pruning is the only thing that removes files, so the index only needs rewriting here to stay bounded by MaxEntries.
+    private static void CompactIndex()
+    {
+        lock (indexGate)
+        {
+            Dictionary<string, string> kept = EnsureIndex()
+                .Where(pair => File.Exists(Path.Combine(CacheDir, pair.Key + ".jpg")))
+                .ToDictionary(pair => pair.Key, pair => pair.Value);
+            urlByHash = kept;
+            File.WriteAllLines(UrlIndexPath, kept.Values);
+        }
+    }
+
+    public static string HashFor(string url)
+    {
+        return Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(url)));
+    }
+
     private static string PathFor(string url)
     {
-        return Path.Combine(CacheDir, Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes(url))) + ".jpg");
+        return Path.Combine(CacheDir, HashFor(url) + ".jpg");
     }
 }

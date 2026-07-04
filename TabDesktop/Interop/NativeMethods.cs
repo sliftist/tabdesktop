@@ -7,6 +7,10 @@ internal static class NativeMethods
 {
     public const int GWL_EXSTYLE = -20;
     public const long WS_EX_TOOLWINDOW = 0x00000080;
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public const uint SWP_NOSIZE = 0x0001;
+    public const uint SWP_NOMOVE = 0x0002;
+    public const uint SWP_NOACTIVATE = 0x0010;
     public const int DWMWA_CLOAKED = 14;
     public const uint PW_RENDERFULLCONTENT = 0x00000002;
     public const int SM_XVIRTUALSCREEN = 76;
@@ -254,4 +258,7 @@ internal static class NativeMethods
 
     [DllImport("user32.dll")]
     public static extern bool BringWindowToTop(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int cx, int cy, uint flags);
 }

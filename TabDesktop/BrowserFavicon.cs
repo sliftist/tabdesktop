@@ -149,32 +149,56 @@ public static class BrowserFavicon
         return null;
     }
 
-    // immutable=1 promises SQLite the file won't change under it, so it skips the byte-range locking that would otherwise fail against the running browser. mode=ro keeps it read-only. The URI form is required for these query parameters; spaces (e.g. "User Data") must be percent-encoded.
+    // immutable=1 promises SQLite the file won't change under it, so it skips the byte-range locking that would otherwise fail against the running browser. mode=ro keeps it read-only. The URI form is required for these query parameters; spaces (e.g. "User Data") must be percent-encoded. Pooling is off because immutable=1 also stops SQLite from ever revalidating its page cache — a pooled handle that once caught the browser mid-write would keep reporting SQLITE_CORRUPT for every later query until app restart.
     private static string ImmutableConnectionString(string dbPath)
     {
         string uriPath = dbPath.Replace('\\', '/').Replace(" ", "%20");
-        return $"Data Source=file:{uriPath}?immutable=1&mode=ro";
+        return $"Data Source=file:{uriPath}?immutable=1&mode=ro;Pooling=False";
+    }
+
+    private static readonly HashSet<string> reportedTornReadDbs = new();
+
+    // Reading the live db as immutable means the browser can write pages under us mid-query, which SQLite surfaces as SQLITE_CORRUPT ("database disk image is malformed"). The file itself is fine — treat it as a miss and let the caller's retry interval pick it up on a later read; logged once per db so the Log tab shows it happening without a line every retry.
+    private static object? QueryScalarTolerantOfTornReads(string dbPath, Action<SqliteCommand> configure)
+    {
+        try
+        {
+            using var connection = new SqliteConnection(ImmutableConnectionString(dbPath));
+            connection.Open();
+            using SqliteCommand command = connection.CreateCommand();
+            configure(command);
+            return command.ExecuteScalar();
+        }
+        catch (SqliteException ex)
+        {
+            lock (reportedTornReadDbs)
+            {
+                if (reportedTornReadDbs.Add(dbPath))
+                {
+                    AppLog.Write(nameof(BrowserFavicon), $"Torn read of live browser db (treated as a miss, will retry): {dbPath}\n{ex}");
+                }
+            }
+            return null;
+        }
     }
 
     private static string? QueryUrlForTitle(string historyDb, string pageTitle)
     {
-        using var connection = new SqliteConnection(ImmutableConnectionString(historyDb));
-        connection.Open();
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = "SELECT url FROM urls WHERE title = $title ORDER BY last_visit_time DESC LIMIT 1";
-        command.Parameters.AddWithValue("$title", pageTitle);
-        return command.ExecuteScalar() as string;
+        return QueryScalarTolerantOfTornReads(historyDb, command =>
+        {
+            command.CommandText = "SELECT url FROM urls WHERE title = $title ORDER BY last_visit_time DESC LIMIT 1";
+            command.Parameters.AddWithValue("$title", pageTitle);
+        }) as string;
     }
 
     private static byte[]? QueryFaviconBytes(string faviconsDb, string url)
     {
-        using var connection = new SqliteConnection(ImmutableConnectionString(faviconsDb));
-        connection.Open();
-        using SqliteCommand command = connection.CreateCommand();
-        command.CommandText = "SELECT fb.image_data FROM favicon_bitmaps fb JOIN icon_mapping im ON im.icon_id = fb.icon_id WHERE im.page_url = $url ORDER BY ABS(fb.width - $size) LIMIT 1";
-        command.Parameters.AddWithValue("$url", url);
-        command.Parameters.AddWithValue("$size", PreferredIconSize);
-        return command.ExecuteScalar() as byte[];
+        return QueryScalarTolerantOfTornReads(faviconsDb, command =>
+        {
+            command.CommandText = "SELECT fb.image_data FROM favicon_bitmaps fb JOIN icon_mapping im ON im.icon_id = fb.icon_id WHERE im.page_url = $url ORDER BY ABS(fb.width - $size) LIMIT 1";
+            command.Parameters.AddWithValue("$url", url);
+            command.Parameters.AddWithValue("$size", PreferredIconSize);
+        }) as byte[];
     }
 
     internal static ImageSource DecodeImage(byte[] data)

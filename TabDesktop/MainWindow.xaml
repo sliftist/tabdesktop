@@ -9,7 +9,7 @@
     <Window.Resources>
         <local:FractionOfHeightConverter x:Key="SectionMaxHeight" Fraction="0.8" />
     </Window.Resources>
-    <TabControl>
+    <TabControl x:Name="MainTabs" SelectionChanged="OnMainTabChanged">
         <TabItem Header="Settings">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <StackPanel Margin="16,12" MaxWidth="900" HorizontalAlignment="Left">
@@ -152,6 +152,53 @@
                     </GridView>
                 </ListView.View>
             </ListView>
+        </TabItem>
+        <TabItem x:Name="ThumbnailsTab" Header="Thumbnails">
+            <DockPanel Margin="10,8">
+                <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+                    <TextBlock Text="Search:  " VerticalAlignment="Center" />
+                    <Button x:Name="ThumbnailRefreshButton" DockPanel.Dock="Right" Content="Refresh" Padding="10,2" Margin="12,0,0,0" Click="OnThumbnailRefresh" />
+                    <TextBlock x:Name="ThumbnailStaleText" DockPanel.Dock="Right" Text="Out of date" Foreground="#CC7700" FontWeight="Bold" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed" ToolTip="Thumbnails or titles changed since this list was loaded — a new search refreshes automatically, or click Refresh" />
+                    <TextBlock x:Name="ThumbnailCountText" DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="Gray" />
+                    <TextBox x:Name="ThumbnailSearchBox" TextChanged="OnThumbnailSearch" ToolTip="Case-insensitive contains match against every field of the row: title, URL, file hash, last-used date, and size" />
+                </DockPanel>
+                <ListView x:Name="ThumbnailList">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Thumbnail" Width="110">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Image Source="{Binding Image}" Height="48" Stretch="Uniform" HorizontalAlignment="Left" RenderOptions.BitmapScalingMode="HighQuality" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Title" Width="300">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <local:MiddleEllipsisTextBlock FullText="{Binding Title}" VerticalAlignment="Center" ToolTip="{Binding Title}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="URL" Width="340">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <local:MiddleEllipsisTextBlock FullText="{Binding Url}" VerticalAlignment="Center" ToolTip="{Binding Url}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                            <GridViewColumn Header="Last used" Width="120" DisplayMemberBinding="{Binding LastUsedText}" />
+                            <GridViewColumn Header="Size" Width="70" DisplayMemberBinding="{Binding SizeText}" />
+                            <GridViewColumn Header="File hash" Width="150">
+                                <GridViewColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <local:MiddleEllipsisTextBlock FullText="{Binding Hash}" VerticalAlignment="Center" ToolTip="{Binding Hash}" />
+                                    </DataTemplate>
+                                </GridViewColumn.CellTemplate>
+                            </GridViewColumn>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </DockPanel>
         </TabItem>
         <TabItem Header="Threads">
             <DockPanel>

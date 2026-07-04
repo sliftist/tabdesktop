@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -23,7 +24,7 @@ public partial class TabStripWindow : Window
     private static readonly Brush ExtensionConnectedBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0x7D, 0x32));
     private const double DisconnectedIconOpacity = 0.4;
 
-    private readonly Action<IntPtr> focusRequested;
+    private readonly Action<WindowEntry> activateRequested;
     private readonly Action<WindowEntry, double> reorderRequested;
     private readonly Action showMainRequested;
     private readonly Action<WindowEntry> directoryTitleToggleRequested;
@@ -38,18 +39,21 @@ public partial class TabStripWindow : Window
     private Point dragStart;
     private bool dragging;
     private ExtensionInstallWindow? installWindow;
+    // The strip's ItemsSource, mutated in place on every refresh: replacing the ItemsSource wholesale regenerates all tab containers, which flashes the hover overlay and eats a click whose press landed on a container recycled before the release.
+    private readonly ObservableCollection<WindowEntry> members = new();
 
     public HashSet<IntPtr> MemberHwnds { get; private set; } = new();
 
-    public TabStripWindow(Action<IntPtr> focusRequested, Action<WindowEntry, double> reorderRequested, Action showMainRequested, Action<WindowEntry> directoryTitleToggleRequested, Action<WindowEntry> expandTabsToggleRequested)
+    public TabStripWindow(Action<WindowEntry> activateRequested, Action<WindowEntry, double> reorderRequested, Action showMainRequested, Action<WindowEntry> directoryTitleToggleRequested, Action<WindowEntry> expandTabsToggleRequested)
     {
-        this.focusRequested = focusRequested;
+        this.activateRequested = activateRequested;
         this.reorderRequested = reorderRequested;
         this.showMainRequested = showMainRequested;
         this.directoryTitleToggleRequested = directoryTitleToggleRequested;
         this.expandTabsToggleRequested = expandTabsToggleRequested;
         InitializeComponent();
         Height = StripHeight;
+        Tabs.ItemsSource = members;
         TabActionsPopup.Closed += (_, _) => ApplyPendingGroup();
         // Tool-window ex-style keeps the strip out of alt-tab and out of our own scanner's candidate filter, so strips never form groups over themselves.
         SourceInitialized += (_, _) =>
@@ -64,7 +68,8 @@ public partial class TabStripWindow : Window
     public void Update(WindowGroup group, double dpiScale)
     {
         UpdateExtensionIndicator();
-        // Replacing ItemsSource regenerates the tab containers, which kills the captured Border mid-drag (stranding the drag) and yanks the action popup's placement target; defer refreshes until the drag ends or the popup closes.
+        ReassertTopmost();
+        // Reordering the tab containers mid-drag would strand the captured Border, and mid-popup would yank the placement target; defer refreshes until the drag ends or the popup closes.
         if (dragEntry is not null || TabActionsPopup.IsOpen)
         {
             pendingGroup = group;
@@ -81,9 +86,43 @@ public partial class TabStripWindow : Window
             doubleHeight = savedState.Value.DoubleHeight;
         }
         MemberHwnds = group.Members.Select(m => m.Hwnd).ToHashSet();
-        Tabs.ItemsSource = group.Members;
+        SyncMembers(group.Members);
         CountText.Text = group.Members.Count.ToString();
         ApplyLayout();
+    }
+
+    // WindowEntry objects persist across refreshes (cached per hwnd / per tab id in MainWindow), so syncing by reference keeps each unchanged tab's container alive.
+    private void SyncMembers(List<WindowEntry> target)
+    {
+        for (int i = members.Count - 1; i >= 0; i--)
+        {
+            if (!target.Contains(members[i]))
+            {
+                members.RemoveAt(i);
+            }
+        }
+        for (int i = 0; i < target.Count; i++)
+        {
+            int current = members.IndexOf(target[i]);
+            if (current < 0)
+            {
+                members.Insert(i, target[i]);
+            }
+            else if (current != i)
+            {
+                members.Move(current, i);
+            }
+        }
+    }
+
+    // Topmost is a z-band position, not a sticky flag: any window made topmost later stacks above the strip, and some fullscreen transitions strip the bit outright. Re-asserting on every refresh keeps the strip on top; SWP_NOACTIVATE so it never steals focus doing so.
+    private void ReassertTopmost()
+    {
+        IntPtr handle = new WindowInteropHelper(this).Handle;
+        if (handle != IntPtr.Zero)
+        {
+            NativeMethods.SetWindowPos(handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0, NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+        }
     }
 
     private void ApplyLayout()
@@ -314,11 +353,7 @@ public partial class TabStripWindow : Window
         if (!wasDragging)
         {
             ApplyPendingGroup();
-            if (entry.BrowserTab is not null)
-            {
-                ExtensionThumbnails.ActivateTab(entry.BrowserTab);
-            }
-            focusRequested(entry.Hwnd);
+            activateRequested(entry);
             return;
         }
         // Compute the drop before applying any deferred group update — it reads the tab containers the drag happened over.

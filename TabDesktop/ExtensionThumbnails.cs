@@ -18,7 +18,7 @@ public static class ExtensionThumbnails
 {
     public const int Port = 38472;
     private const int MaxRequestBytes = 8 * 1024 * 1024;
-    private const int MaxCachedTitles = 500;
+    private const int MaxCachedTitles = 20_000;
     private static readonly TimeSpan SocketTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ImageDownloadTimeout = TimeSpan.FromSeconds(10);
     // Every page reports on a 15 s cycle, so three missed cycles means the extension really is gone (browser closed, extension removed) rather than momentarily quiet.
@@ -82,10 +82,10 @@ public static class ExtensionThumbnails
                 return null;
             }
         }
-        // Memory miss with a known URL: the disk cache may still have it from a previous run. Off-thread because this getter runs on the UI thread inside bindings.
+        // Memory miss with a known URL: the disk cache may still have it from a previous run, or failing that a same-domain cached URL sharing the identifying query parameter. Off-thread because this getter runs on the UI thread inside bindings.
         Task.Run(() =>
         {
-            ImageSource? loaded = ThumbnailDiskCache.TryLoad(url);
+            ImageSource? loaded = ThumbnailDiskCache.TryLoad(url) ?? ThumbnailFuzzyMatch.TryLoad(url);
             lock (gate)
             {
                 diskLoadPending.Remove(key);
@@ -104,6 +104,19 @@ public static class ExtensionThumbnails
             }
         });
         return null;
+    }
+
+    // Bumped whenever the title→URL map changes so the Thumbnails tab can tell its snapshot is out of date.
+    private static int savedUrlsVersion;
+    public static int SavedUrlsVersion => Volatile.Read(ref savedUrlsVersion);
+
+    // Snapshot of the persisted title→URL map, for the Thumbnails browse tab.
+    public static List<(string Title, string? Url)> SnapshotSavedUrls()
+    {
+        lock (gate)
+        {
+            return urlsByTitle.Select(pair => (pair.Key, pair.Value)).ToList();
+        }
     }
 
     // The URL of the report that carried a title; lets the whitelist toggle learn a tab's domain without touching History.
@@ -287,25 +300,9 @@ public static class ExtensionThumbnails
         string key = BrowserFavicon.StripNotificationCount(report.Title);
         lock (gate)
         {
-            if (!urlsByTitle.TryGetValue(key, out string? existingUrl))
-            {
-                insertionOrder.Enqueue(key);
-                urlsDirty = true;
-            }
-            else if (existingUrl != report.Url)
-            {
-                urlsDirty = true;
-            }
-            urlsByTitle[key] = report.Url;
+            RecordUrlForTitleLocked(key, report.Url);
             // A fresh report may carry an image the disk cache lacked earlier.
             diskLoadMissed.Remove(key);
-            while (insertionOrder.Count > MaxCachedTitles)
-            {
-                string evicted = insertionOrder.Dequeue();
-                urlsByTitle.Remove(evicted);
-                thumbnailsByTitle.Remove(evicted);
-                urlsDirty = true;
-            }
         }
         byte[]? imageBytes = null;
         if (!string.IsNullOrEmpty(report.ImageDataUrl))
@@ -330,6 +327,33 @@ public static class ExtensionThumbnails
             thumbnailsByTitle[key] = image;
         }
         Updated?.Invoke();
+    }
+
+    // Caller holds gate. A changed URL also clears the disk-miss marker — the new URL may hit the cache (or fuzzy-match) where the old one didn't.
+    private static void RecordUrlForTitleLocked(string key, string? url)
+    {
+        if (!urlsByTitle.TryGetValue(key, out string? existingUrl))
+        {
+            insertionOrder.Enqueue(key);
+            urlsDirty = true;
+            Interlocked.Increment(ref savedUrlsVersion);
+            diskLoadMissed.Remove(key);
+        }
+        else if (existingUrl != url)
+        {
+            urlsDirty = true;
+            Interlocked.Increment(ref savedUrlsVersion);
+            diskLoadMissed.Remove(key);
+        }
+        urlsByTitle[key] = url;
+        while (insertionOrder.Count > MaxCachedTitles)
+        {
+            string evicted = insertionOrder.Dequeue();
+            urlsByTitle.Remove(evicted);
+            thumbnailsByTitle.Remove(evicted);
+            urlsDirty = true;
+            Interlocked.Increment(ref savedUrlsVersion);
+        }
     }
 
     // All tabs of the browser window whose active tab matches the window title; falls back to null while no report has arrived.
@@ -370,6 +394,15 @@ public static class ExtensionThumbnails
         {
             AppLog.Write(nameof(ExtensionThumbnails), $"No extension command socket connected — cannot switch to tab \"{tab.Title}\".");
         }
+        // Optimistic local switch, same as MoveTab's reorder: the strip highlights the clicked tab instantly instead of waiting for the browser's confirmation report, which then converges to the actual state.
+        lock (gate)
+        {
+            if (tabsByWindowId.TryGetValue(tab.WindowId, out List<BrowserTab>? tabs))
+            {
+                tabsByWindowId[tab.WindowId] = tabs.Select(t => t with { Active = t.Id == tab.Id }).ToList();
+            }
+        }
+        TabsChanged?.Invoke();
     }
 
     public static void MoveTab(BrowserTab tab, int newIndex)
@@ -408,6 +441,17 @@ public static class ExtensionThumbnails
         lock (gate)
         {
             tabsByWindowId = next;
+            // Tab reports arrive on tab events — well before the 15 s thumbnail cycle — so learning title→URL here lets the disk cache and fuzzy matcher resolve a freshly loaded page's thumbnail immediately instead of showing the favicon until the first thumbnail report.
+            foreach (List<BrowserTab> tabs in next.Values)
+            {
+                foreach (BrowserTab tab in tabs)
+                {
+                    if (tab.Title.Length > 0 && !string.IsNullOrEmpty(tab.Url))
+                    {
+                        RecordUrlForTitleLocked(BrowserFavicon.StripNotificationCount(tab.Title), tab.Url);
+                    }
+                }
+            }
         }
         Updated?.Invoke();
         TabsChanged?.Invoke();
