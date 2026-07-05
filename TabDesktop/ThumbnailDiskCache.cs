@@ -197,7 +197,34 @@ public static class ThumbnailDiskCache
         }
     }
 
-    // Pruning is the only thing that removes files, so the index only needs rewriting here to stay bounded by MaxEntries.
+    // Backs the Thumbnails tab's delete button.
+    public static void DeleteMany(IEnumerable<string> hashes)
+    {
+        try
+        {
+            int deleted = 0;
+            foreach (string hash in hashes)
+            {
+                string path = Path.Combine(CacheDir, hash + ".jpg");
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                    deleted++;
+                }
+            }
+            if (deleted > 0)
+            {
+                Interlocked.Increment(ref version);
+                CompactIndex();
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLog.Write(nameof(ThumbnailDiskCache), ex.ToString());
+        }
+    }
+
+    // Deleting files (pruning, the Thumbnails tab's delete) is the only thing that shrinks the cache, so the index only needs rewriting from those paths to stay bounded by MaxEntries.
     private static void CompactIndex()
     {
         lock (indexGate)

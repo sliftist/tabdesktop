@@ -158,6 +158,7 @@
                 <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                     <TextBlock Text="Search:  " VerticalAlignment="Center" />
                     <Button x:Name="ThumbnailRefreshButton" DockPanel.Dock="Right" Content="Refresh" Padding="10,2" Margin="12,0,0,0" Click="OnThumbnailRefresh" />
+                    <Button x:Name="ThumbnailDeleteButton" DockPanel.Dock="Right" Content="Delete matched" Padding="10,2" Margin="12,0,0,0" Click="OnThumbnailDelete" ToolTip="Delete every row matching the current search — the cached files and their saved title/URL entries; with an empty search this deletes everything" />
                     <TextBlock x:Name="ThumbnailStaleText" DockPanel.Dock="Right" Text="Out of date" Foreground="#CC7700" FontWeight="Bold" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed" ToolTip="Thumbnails or titles changed since this list was loaded — a new search refreshes automatically, or click Refresh" />
                     <TextBlock x:Name="ThumbnailCountText" DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center" Foreground="Gray" />
                     <TextBox x:Name="ThumbnailSearchBox" TextChanged="OnThumbnailSearch" ToolTip="Case-insensitive contains match against every field of the row: title, URL, file hash, last-used date, and size" />

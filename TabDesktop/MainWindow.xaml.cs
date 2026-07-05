@@ -763,6 +763,26 @@ public partial class MainWindow : Window
         RefreshThumbnailRows();
     }
 
+    // Deletes ALL matches of the current search (not just the rows shown under the display cap); an empty search deletes everything. No confirmation — it's a regenerable cache.
+    private void OnThumbnailDelete(object sender, RoutedEventArgs e)
+    {
+        if (thumbnailRows is null)
+        {
+            return;
+        }
+        string query = ThumbnailSearchBox.Text.Trim();
+        List<ThumbnailRow> matched = query.Length == 0
+            ? thumbnailRows
+            : thumbnailRows.Where(r => r.SearchText.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (matched.Count == 0)
+        {
+            return;
+        }
+        ThumbnailDiskCache.DeleteMany(matched.Where(r => r.FilePath is not null).Select(r => r.Hash));
+        ExtensionThumbnails.ForgetTitles(matched.Select(r => r.Title).Where(t => t.Length > 0));
+        RefreshThumbnailRows();
+    }
+
     private bool IsThumbnailSnapshotStale()
     {
         return thumbnailSnapshotDiskVersion != ThumbnailDiskCache.Version || thumbnailSnapshotUrlsVersion != ExtensionThumbnails.SavedUrlsVersion;

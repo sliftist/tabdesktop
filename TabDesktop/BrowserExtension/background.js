@@ -55,7 +55,7 @@ async function reportTabs() {
             if (!windows.has(tab.windowId)) {
                 windows.set(tab.windowId, { windowId: tab.windowId, tabs: [] });
             }
-            windows.get(tab.windowId).tabs.push({ id: tab.id, title: tab.title ?? "", url: tab.url ?? "", active: tab.active, index: tab.index });
+            windows.get(tab.windowId).tabs.push({ id: tab.id, title: tab.title ?? "", url: tab.url ?? "", active: tab.active, index: tab.index, incognito: tab.incognito });
         }
         await fetch(TABS_ENDPOINT, {
             method: "POST",

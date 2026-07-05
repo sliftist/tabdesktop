@@ -6,6 +6,8 @@ namespace TabDesktop;
 public static class ThumbnailFuzzyMatch
 {
     private const int MinDomainThumbnails = 10;
+    // A value shared by this many cached URLs isn't a content identifier (think hl=en or ar=1) — matching on it would show some unrelated page's thumbnail.
+    private const int MaxValueMatches = 20;
 
     public static ImageSource? TryLoad(string url)
     {
@@ -61,12 +63,21 @@ public static class ThumbnailFuzzyMatch
             .ToList();
         foreach ((string key, string value) in ordered)
         {
-            foreach ((string candidateUrl, List<(string Key, string Value)> parameters) in parsed)
+            List<string> matches = parsed
+                .Where(p => p.Params.Any(q => q.Key == key && q.Value == value))
+                .Select(p => p.Url)
+                .ToList();
+            if (matches.Count == 0)
             {
-                if (!parameters.Any(p => p.Key == key && p.Value == value))
-                {
-                    continue;
-                }
+                continue;
+            }
+            // Params are ordered most-unique first, so if even this one's value is too widely shared, everything after it is more generic still — give up rather than degrade.
+            if (matches.Count > MaxValueMatches)
+            {
+                return null;
+            }
+            foreach (string candidateUrl in matches)
+            {
                 ImageSource? image = ThumbnailDiskCache.TryLoad(candidateUrl);
                 if (image is not null)
                 {

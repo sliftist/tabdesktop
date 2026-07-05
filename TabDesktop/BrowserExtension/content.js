@@ -57,7 +57,8 @@ async function toDataUrl(url) {
 }
 
 async function report() {
-    const message = { title: document.title, url: location.href };
+    // The incognito flag tells TabDesktop to keep this page's data out of its on-disk caches.
+    const message = { title: document.title, url: location.href, incognito: chrome.extension.inIncognitoContext };
     if (document.visibilityState === "visible") {
         // The site's own poster/og:image is the curated thumbnail and always beats a frame grab of the playing video.
         const imageUrl = findImageUrl();

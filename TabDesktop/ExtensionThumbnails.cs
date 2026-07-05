@@ -44,6 +44,8 @@ public static class ExtensionThumbnails
     private static bool urlsDirty;
     private static readonly HashSet<string> diskLoadPending = new();
     private static readonly HashSet<string> diskLoadMissed = new();
+    // Titles whose latest report came from an incognito tab: they get full in-memory treatment but are excluded from every disk write — persisting them would betray the mode's promise.
+    private static readonly HashSet<string> incognitoTitles = new();
 
     public static event Action? Updated;
 
@@ -117,6 +119,26 @@ public static class ExtensionThumbnails
         {
             return urlsByTitle.Select(pair => (pair.Key, pair.Value)).ToList();
         }
+    }
+
+    // Backs the Thumbnails tab's delete: drops the rows' in-memory images and persisted title→URL entries. Titles belonging to still-open tabs are re-learned on the next report, which is the correct outcome — delete clears history, not live state.
+    public static void ForgetTitles(IEnumerable<string> titles)
+    {
+        lock (gate)
+        {
+            foreach (string title in titles)
+            {
+                if (urlsByTitle.Remove(title))
+                {
+                    urlsDirty = true;
+                    Interlocked.Increment(ref savedUrlsVersion);
+                }
+                thumbnailsByTitle.Remove(title);
+                incognitoTitles.Remove(title);
+                diskLoadMissed.Remove(title);
+            }
+        }
+        Updated?.Invoke();
     }
 
     // The URL of the report that carried a title; lets the whitelist toggle learn a tab's domain without touching History.
@@ -300,7 +322,7 @@ public static class ExtensionThumbnails
         string key = BrowserFavicon.StripNotificationCount(report.Title);
         lock (gate)
         {
-            RecordUrlForTitleLocked(key, report.Url);
+            RecordUrlForTitleLocked(key, report.Url, report.Incognito);
             // A fresh report may carry an image the disk cache lacked earlier.
             diskLoadMissed.Remove(key);
         }
@@ -318,7 +340,7 @@ public static class ExtensionThumbnails
             return;
         }
         ImageSource image = BrowserFavicon.DecodeImage(imageBytes);
-        if (!string.IsNullOrEmpty(report.Url))
+        if (!string.IsNullOrEmpty(report.Url) && !report.Incognito)
         {
             ThumbnailDiskCache.Save(report.Url, imageBytes);
         }
@@ -330,7 +352,7 @@ public static class ExtensionThumbnails
     }
 
     // Caller holds gate. A changed URL also clears the disk-miss marker — the new URL may hit the cache (or fuzzy-match) where the old one didn't.
-    private static void RecordUrlForTitleLocked(string key, string? url)
+    private static void RecordUrlForTitleLocked(string key, string? url, bool incognito)
     {
         if (!urlsByTitle.TryGetValue(key, out string? existingUrl))
         {
@@ -346,11 +368,18 @@ public static class ExtensionThumbnails
             diskLoadMissed.Remove(key);
         }
         urlsByTitle[key] = url;
+        // A membership change dirties the save either way: a title leaving incognito must start persisting, one entering it must be scrubbed from the file.
+        bool incognitoChanged = incognito ? incognitoTitles.Add(key) : incognitoTitles.Remove(key);
+        if (incognitoChanged)
+        {
+            urlsDirty = true;
+        }
         while (insertionOrder.Count > MaxCachedTitles)
         {
             string evicted = insertionOrder.Dequeue();
             urlsByTitle.Remove(evicted);
             thumbnailsByTitle.Remove(evicted);
+            incognitoTitles.Remove(evicted);
             urlsDirty = true;
             Interlocked.Increment(ref savedUrlsVersion);
         }
@@ -442,13 +471,13 @@ public static class ExtensionThumbnails
         {
             tabsByWindowId = next;
             // Tab reports arrive on tab events — well before the 15 s thumbnail cycle — so learning title→URL here lets the disk cache and fuzzy matcher resolve a freshly loaded page's thumbnail immediately instead of showing the favicon until the first thumbnail report.
-            foreach (List<BrowserTab> tabs in next.Values)
+            foreach (WindowReport window in report.Windows)
             {
-                foreach (BrowserTab tab in tabs)
+                foreach (TabReport tab in window.Tabs)
                 {
                     if (tab.Title.Length > 0 && !string.IsNullOrEmpty(tab.Url))
                     {
-                        RecordUrlForTitleLocked(BrowserFavicon.StripNotificationCount(tab.Title), tab.Url);
+                        RecordUrlForTitleLocked(BrowserFavicon.StripNotificationCount(tab.Title), tab.Url, tab.Incognito);
                     }
                 }
             }
@@ -568,7 +597,7 @@ public static class ExtensionThumbnails
                     return;
                 }
                 urlsDirty = false;
-                snapshot = new Dictionary<string, string?>(urlsByTitle);
+                snapshot = urlsByTitle.Where(pair => !incognitoTitles.Contains(pair.Key)).ToDictionary(pair => pair.Key, pair => pair.Value);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(UrlsPath)!);
             File.WriteAllText(UrlsPath, JsonSerializer.Serialize(snapshot));
@@ -704,6 +733,7 @@ public static class ExtensionThumbnails
         public string? Url { get; set; }
         public string? ImageDataUrl { get; set; }
         public string? ImageUrl { get; set; }
+        public bool Incognito { get; set; }
     }
 
     private sealed class TabsReport
@@ -724,5 +754,6 @@ public static class ExtensionThumbnails
         public string? Url { get; set; }
         public bool Active { get; set; }
         public int Index { get; set; }
+        public bool Incognito { get; set; }
     }
 }
