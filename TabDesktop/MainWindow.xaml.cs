@@ -53,7 +53,6 @@ public partial class MainWindow : Window
     private IntPtr lastForeground;
     // Keyed by DisplayTitle rather than hwnd so the order survives app restarts and window recreation; for apps like Cursor the display title (the folder) is the stable identity even though the full title changes with every file switch.
     private readonly Dictionary<string, double> tabOrder;
-    private double lastAssignedOrder;
     private bool tabOrderDirty;
     private readonly Dictionary<IntPtr, WindowEntry> entriesByHwnd = new();
     private readonly HashSet<IntPtr> pendingTitleCaptures = new();
@@ -71,7 +70,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         tabOrder = LoadTabOrder();
-        lastAssignedOrder = tabOrder.Count > 0 ? tabOrder.Values.Max() : 0;
         RestorePlacement();
         Closing += (_, _) => SavePlacement();
 
@@ -373,7 +371,8 @@ public partial class MainWindow : Window
         groups.Clear();
         foreach ((Rect bounds, List<WindowEntry> members) in boxes)
         {
-            List<WindowEntry> ordered = members.OrderBy(EnsureOrder).ThenByDescending(m => m.ZIndex).ToList();
+            // Ties (same-second creation, or windows sharing a name and thus a persisted key) are deduped by pid, then hwnd for same-process windows — never by z-order, which would reorder tabs every time one is focused.
+            List<WindowEntry> ordered = members.OrderBy(EnsureOrder).ThenBy(m => m.Pid).ThenBy(m => (long)m.Hwnd).ToList();
             WindowEntry? lastFocused = ordered.Where(m => m.LastFocusedAt != 0).OrderByDescending(m => m.LastFocusedAt).FirstOrDefault();
             var display = new List<WindowEntry>();
             // Expanded browser tabs always sort after every real window, so a fan of tabs can't bury the actual windows in the strip.
@@ -1145,6 +1144,7 @@ public partial class MainWindow : Window
         RecomputeGroups();
     }
 
+    // A name that already has a persisted key keeps it (manual drags write midpoints here, and they must survive restarts); a new name defaults to its process creation time so order is stable no matter when TabDesktop first sees the window.
     private double EnsureOrder(WindowEntry entry)
     {
         if (entry.OrderKey != 0)
@@ -1153,20 +1153,25 @@ public partial class MainWindow : Window
         }
         if (entry.Title == LoadingTitle)
         {
-            return 0;
+            // Not cached or persisted: the real name hasn't arrived yet, so the name→order mapping can't be recorded.
+            return GetDefaultOrder(entry);
         }
         if (tabOrder.TryGetValue(entry.DisplayTitle, out double existing))
         {
             entry.OrderKey = existing;
             return existing;
         }
-        double nowSeconds = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
-        double assigned = Math.Max(nowSeconds, lastAssignedOrder + 1);
-        lastAssignedOrder = assigned;
+        double assigned = GetDefaultOrder(entry);
         entry.OrderKey = assigned;
         tabOrder[entry.DisplayTitle] = assigned;
         tabOrderDirty = true;
         return assigned;
+    }
+
+    // Whole seconds, so same-second processes tie here and the sort's pid tiebreak dedupes them. Unqueryable processes (elevated) fall back to first-seen time.
+    private static double GetDefaultOrder(WindowEntry entry)
+    {
+        return ProcessDirectory.GetCreationUnixSeconds(entry.Pid) ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
     }
 
     // Re-resolved on every refresh (not just on toggle) so the shown directory tracks the process as it changes its working directory.

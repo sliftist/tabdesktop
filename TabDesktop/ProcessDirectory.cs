@@ -266,6 +266,13 @@ public static class ProcessDirectory
         {
             return cached;
         }
+        long? result = GetCreationFileTime(pid);
+        cache[pid] = result;
+        return result;
+    }
+
+    public static long? GetCreationFileTime(uint pid)
+    {
         long? result = null;
         IntPtr process = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
         if (process != IntPtr.Zero)
@@ -282,7 +289,16 @@ public static class ProcessDirectory
                 NativeMethods.CloseHandle(process);
             }
         }
-        cache[pid] = result;
         return result;
+    }
+
+    // Whole seconds by design: same-second processes are expected to collide here and get deduped by pid at the sort site.
+    public static double? GetCreationUnixSeconds(uint pid)
+    {
+        if (GetCreationFileTime(pid) is not long fileTime)
+        {
+            return null;
+        }
+        return DateTimeOffset.FromFileTime(fileTime).ToUnixTimeSeconds();
     }
 }
