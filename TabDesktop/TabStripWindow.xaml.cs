@@ -301,6 +301,14 @@ public partial class TabStripWindow : Window
         }
     }
 
+    private void OnToggleThumbnailBlacklist(object sender, RoutedEventArgs e)
+    {
+        if (TabActionsPopup.DataContext is WindowEntry entry)
+        {
+            ThumbnailWhitelist.ToggleBlockedForWindow(entry.Title);
+        }
+    }
+
     private void OnToggleExpandTabs(object sender, RoutedEventArgs e)
     {
         if (TabActionsPopup.DataContext is WindowEntry entry)

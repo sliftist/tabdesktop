@@ -87,6 +87,8 @@ public partial class MainWindow : Window
         SearchEnabledCheck.IsChecked = AppSettings.SearchEnabled;
         SearchHotkeyBox.Text = AppSettings.SearchHotkey;
         RunOnStartupCheck.IsChecked = Installer.IsAutoStartEnabled();
+        UpdateStartupStatus();
+        UpdateInstallStatus();
         ApplySearchHotkey();
         // Strips re-read AdvancedMode inside their layout pass; a full refresh pushes the change to every strip immediately.
         AppSettings.Changed += () => Dispatcher.BeginInvoke(RefreshWindows);
@@ -629,10 +631,45 @@ public partial class MainWindow : Window
         {
             AppLog.Write(nameof(Installer), ex.ToString());
         }
+        UpdateStartupStatus();
+    }
+
+    private void UpdateStartupStatus()
+    {
+        string? registered = Installer.GetAutoStartTarget();
+        string current = Environment.ProcessPath!;
+        if (registered is null)
+        {
+            StartupStatusText.Text = $"Would run this exe: {current}";
+        }
+        else if (string.Equals(registered, current, StringComparison.OrdinalIgnoreCase))
+        {
+            StartupStatusText.Text = $"Startup runs this exe: {registered}";
+        }
+        else
+        {
+            StartupStatusText.Text = $"Startup runs: {registered} — not this exe ({current}); re-check the box to switch startup to this one";
+        }
+    }
+
+    private void UpdateInstallStatus()
+    {
+        (string ExePath, string Version)? installed = Installer.GetInstalledInfo();
+        if (installed is null)
+        {
+            InstallAppButton.Content = "Install TabDesktop";
+            InstallStatusText.Text = "Not installed";
+            return;
+        }
+        InstallAppButton.Content = "Reinstall / update";
+        string versionNote = installed.Value.Version == AppInfo.Version ? "" : $" (this build is v{AppInfo.Version})";
+        InstallStatusText.Text = $"Installed: v{installed.Value.Version}{versionNote} — {installed.Value.ExePath}";
     }
 
     private void OnInstallApp(object sender, RoutedEventArgs e)
     {
+        // Checking the box first lets its changed handler fire (targeting this exe) before Install overwrites the batch with the installed exe, which is the copy that should own startup.
+        RunOnStartupCheck.IsChecked = true;
         try
         {
             Installer.Install();
@@ -642,13 +679,14 @@ public partial class MainWindow : Window
             AppLog.Write(nameof(Installer), ex.ToString());
             return;
         }
-        RunOnStartupCheck.IsChecked = true;
+        UpdateStartupStatus();
+        UpdateInstallStatus();
         InstallAppButton.Content = "Installed!";
         var revert = new DispatcherTimer { Interval = InstallFeedbackDuration };
         revert.Tick += (_, _) =>
         {
             revert.Stop();
-            InstallAppButton.Content = "Install TabDesktop";
+            UpdateInstallStatus();
         };
         revert.Start();
     }
@@ -716,6 +754,10 @@ public partial class MainWindow : Window
         foreach (string exe in ThumbnailWhitelist.GetScreenshotExes())
         {
             rows.Add(new SavedStateRow("Screenshot program", exe, () => ThumbnailWhitelist.ToggleScreenshotExe(exe)));
+        }
+        foreach (string domain in ThumbnailWhitelist.GetBlockedDomains())
+        {
+            rows.Add(new SavedStateRow("Blacklisted thumbnail domain", domain, () => ThumbnailWhitelist.ToggleBlockedDomain(domain)));
         }
         foreach (string exe in DirectoryTitles.GetEnabled())
         {

@@ -98,6 +98,43 @@
                             </Canvas>
                         </Viewbox>
                     </Button>
+                    <Button Click="OnToggleThumbnailBlacklist" ToolTip="Blacklist this site's domain — never show any thumbnail (page image, YouTube, or screenshot) for its tabs; remembered">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsBrowserTab}" Value="False">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                        <Viewbox Width="22" Height="22" Margin="4">
+                            <Viewbox.Style>
+                                <Style TargetType="Viewbox">
+                                    <Setter Property="Opacity" Value="0.35" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsThumbnailBlocked}" Value="True">
+                                            <Setter Property="Opacity" Value="1" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Viewbox.Style>
+                            <Canvas Width="24" Height="24">
+                                <Path Data="M4,7.4 Q4,6 5.4,6 L18.6,6 Q20,6 20,7.4 L20,16.6 Q20,18 18.6,18 L5.4,18 Q4,18 4,16.6 Z">
+                                    <Path.Fill>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                            <GradientStop Color="#9BB8D8" Offset="0" />
+                                            <GradientStop Color="#5F7FA6" Offset="1" />
+                                        </LinearGradientBrush>
+                                    </Path.Fill>
+                                </Path>
+                                <Ellipse Canvas.Left="6.2" Canvas.Top="7.6" Width="2.8" Height="2.8" Fill="#F5D06A" />
+                                <Path Fill="#4E7A4A" Data="M4.6,17.4 L9.6,11 L12.8,15 L15,12.4 L19.4,17.4 Z" />
+                                <Ellipse Canvas.Left="2" Canvas.Top="2" Width="20" Height="20" Stroke="#E24A4A" StrokeThickness="2.4" />
+                                <Path Stroke="#E24A4A" StrokeThickness="2.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M5.4,18.6 L18.6,5.4" />
+                            </Canvas>
+                        </Viewbox>
+                    </Button>
                     <Button Click="OnToggleExpandTabs" ToolTip="Expand this browser window into one entry per browser tab — click an entry to switch to that tab (needs the extension)">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">

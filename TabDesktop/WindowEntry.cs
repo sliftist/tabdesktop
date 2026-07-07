@@ -52,6 +52,11 @@ public sealed class WindowEntry : INotifyPropertyChanged
     {
         get
         {
+            if (IsThumbnailBlocked)
+            {
+                lastVideoThumbnail = null;
+                return null;
+            }
             ImageSource? fresh = ExtensionThumbnails.TryGet(title) ?? YouTubeThumbnail.TryGet(title, NotifyIconResolved) ?? (IsScreenshotThumbnailEnabled ? thumbnail : null);
             if (fresh is not null)
             {
@@ -83,6 +88,9 @@ public sealed class WindowEntry : INotifyPropertyChanged
     // Browser tabs opt into screenshots per site domain; everything else per process executable.
     public bool IsScreenshotThumbnailEnabled => IsBrowserTab ? ThumbnailWhitelist.IsScreenshotDomainWhitelisted(TabDomains.TryGet(title, NotifyIconResolved)) : ThumbnailWhitelist.IsScreenshotExe(ExePath);
 
+    // Blacklisted domain: the user declared this site's thumbnails useless, so every source is ignored and the tile falls back to the favicon.
+    public bool IsThumbnailBlocked => IsBrowserTab && ThumbnailWhitelist.IsDomainBlocked(TabDomains.TryGet(title, NotifyIconResolved));
+
     // The video thumbnail supersedes the small favicon (which would just be the YouTube logo next to the video's own image).
     public ImageSource? IconImage => VideoThumbnail is not null ? null : BrowserFavicon.TryGet(title, NotifyIconResolved) ?? CursorFavicon.TryGet(title) ?? TitleRules.GetIcon(title) ?? WindowIcon.TryGet(Hwnd, Pid, NotifyIconResolved);
 
@@ -94,6 +102,7 @@ public sealed class WindowEntry : INotifyPropertyChanged
             Raise(nameof(VideoThumbnail));
             Raise(nameof(IconImage));
             Raise(nameof(IsScreenshotThumbnailEnabled));
+            Raise(nameof(IsThumbnailBlocked));
         });
     }
 
@@ -105,6 +114,7 @@ public sealed class WindowEntry : INotifyPropertyChanged
         Raise(nameof(IsBrowserTab));
         Raise(nameof(CanExpandTabs));
         Raise(nameof(IsScreenshotThumbnailEnabled));
+        Raise(nameof(IsThumbnailBlocked));
     }
 
     private string positionText = "";

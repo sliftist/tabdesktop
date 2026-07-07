@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace TabDesktop;
 
-// Persisted opt-in lists controlling screenshot thumbnails, toggled from the tab right-click popup: the window screenshot stands in as the thumbnail for whitelisted executables (non-browser apps) or whitelisted site domains (browser tabs). Page thumbnails (poster/og:image) need no opt-in — the extension checks every focused page.
+// Persisted opt-in lists controlling screenshot thumbnails, toggled from the tab right-click popup: the window screenshot stands in as the thumbnail for whitelisted executables (non-browser apps) or whitelisted site domains (browser tabs). Page thumbnails (poster/og:image) need no opt-in — the extension checks every focused page. Also holds the per-domain blacklist: some sites report thumbnails that are useless (generic banners, logos), and blacklisting the domain suppresses every thumbnail source for its tabs.
 public static class ThumbnailWhitelist
 {
     private static readonly string ConfigPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TabDesktop", "thumbnail-whitelist.json");
@@ -12,6 +12,7 @@ public static class ThumbnailWhitelist
     private static readonly HashSet<string> screenshotExes = new(StringComparer.OrdinalIgnoreCase);
     // Screenshot opt-in for browser tabs is per-domain — whitelisting the browser exe would drag every site along.
     private static readonly HashSet<string> screenshotDomains = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> blockedDomains = new(StringComparer.OrdinalIgnoreCase);
 
     public static event Action? Changed;
 
@@ -27,6 +28,7 @@ public static class ThumbnailWhitelist
             Config config = JsonSerializer.Deserialize<Config>(File.ReadAllText(ConfigPath), options) ?? new Config();
             screenshotExes.UnionWith(config.ScreenshotExes);
             screenshotDomains.UnionWith(config.ScreenshotDomains);
+            blockedDomains.UnionWith(config.BlockedDomains);
         }
         catch (Exception ex)
         {
@@ -58,7 +60,29 @@ public static class ThumbnailWhitelist
         }
     }
 
+    public static bool IsDomainBlocked(string? host)
+    {
+        if (host is null)
+        {
+            return false;
+        }
+        lock (gate)
+        {
+            return blockedDomains.Contains(host);
+        }
+    }
+
     public static void ToggleScreenshotForWindow(string windowTitle)
+    {
+        ToggleDomainForWindow(windowTitle, ToggleScreenshotDomain);
+    }
+
+    public static void ToggleBlockedForWindow(string windowTitle)
+    {
+        ToggleDomainForWindow(windowTitle, ToggleBlockedDomain);
+    }
+
+    private static void ToggleDomainForWindow(string windowTitle, Action<string> toggle)
     {
         Task.Run(() =>
         {
@@ -76,7 +100,7 @@ public static class ThumbnailWhitelist
                 AppLog.Write(nameof(ThumbnailWhitelist), $"Could not determine the domain for \"{windowTitle}\" — no extension report and no History match yet.");
                 return;
             }
-            ToggleScreenshotDomain(host);
+            toggle(host);
         });
     }
 
@@ -93,11 +117,32 @@ public static class ThumbnailWhitelist
         Changed?.Invoke();
     }
 
+    public static void ToggleBlockedDomain(string host)
+    {
+        lock (gate)
+        {
+            if (!blockedDomains.Add(host))
+            {
+                blockedDomains.Remove(host);
+            }
+            Save();
+        }
+        Changed?.Invoke();
+    }
+
     public static List<string> GetScreenshotDomains()
     {
         lock (gate)
         {
             return screenshotDomains.OrderBy(d => d).ToList();
+        }
+    }
+
+    public static List<string> GetBlockedDomains()
+    {
+        lock (gate)
+        {
+            return blockedDomains.OrderBy(d => d).ToList();
         }
     }
 
@@ -126,7 +171,7 @@ public static class ThumbnailWhitelist
     {
         try
         {
-            var config = new Config { ScreenshotExes = screenshotExes.ToList(), ScreenshotDomains = screenshotDomains.ToList() };
+            var config = new Config { ScreenshotExes = screenshotExes.ToList(), ScreenshotDomains = screenshotDomains.ToList(), BlockedDomains = blockedDomains.ToList() };
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigPath)!);
             File.WriteAllText(ConfigPath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
         }
@@ -140,5 +185,6 @@ public static class ThumbnailWhitelist
     {
         public List<string> ScreenshotExes { get; set; } = new();
         public List<string> ScreenshotDomains { get; set; } = new();
+        public List<string> BlockedDomains { get; set; } = new();
     }
 }

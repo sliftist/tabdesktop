@@ -15,6 +15,24 @@ public static class Installer
     private static readonly string InstallDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", AppName);
     private static readonly string InstalledExe = Path.Combine(InstallDir, AppName + ".exe");
     private static readonly string StartMenuShortcut = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.StartMenu), "Programs", AppName + ".lnk");
+    private static readonly string StartupBatch = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Startup), AppName + ".bat");
+
+    // Null when no installed copy exists. The version is read from the installed exe itself, which can be older or newer than the running build.
+    public static (string ExePath, string Version)? GetInstalledInfo()
+    {
+        if (!File.Exists(InstalledExe))
+        {
+            return null;
+        }
+        string version = FileVersionInfo.GetVersionInfo(InstalledExe).ProductVersion ?? "unknown";
+        // The SDK appends "+<commit>" to ProductVersion when repository info is available.
+        int plus = version.IndexOf('+');
+        if (plus >= 0)
+        {
+            version = version[..plus];
+        }
+        return (InstalledExe, version);
+    }
 
     public static void Install()
     {
@@ -27,7 +45,7 @@ public static class Installer
         }
         CreateStartMenuShortcut();
         RegisterUninstall(sourceExe);
-        SetAutoStart(true);
+        SetAutoStart(true, InstalledExe);
     }
 
     // A running installed copy locks its exe against deletion/overwrite, but NT still allows renaming a running exe — so the old file is moved aside and cleaned up on the next install.
@@ -90,21 +108,44 @@ public static class Installer
 
     public static bool IsAutoStartEnabled()
     {
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
-        return key?.GetValue(AppName) is not null;
+        return File.Exists(StartupBatch);
     }
 
-    public static void SetAutoStart(bool enabled)
+    // The exe path the startup batch file currently launches, or null when no batch file exists. Useful when multiple copies of the app are around: this is the one that actually runs at login.
+    public static string? GetAutoStartTarget()
     {
-        using RegistryKey key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
+        if (!File.Exists(StartupBatch))
+        {
+            return null;
+        }
+        foreach (string line in File.ReadAllLines(StartupBatch))
+        {
+            // start's first quoted argument is the window title; the target exe is the second quoted string.
+            string[] parts = line.Split('"');
+            if (parts.Length >= 4 && parts[3].EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            {
+                return parts[3];
+            }
+        }
+        return null;
+    }
+
+    // Autostart is a batch file in the user's Startup folder rather than a Run registry value: the file is visible and editable by the user, and its content states exactly which exe runs. targetExe defaults to the currently running exe so the checkbox always registers the copy the user is actually using.
+    public static void SetAutoStart(bool enabled, string? targetExe = null)
+    {
+        // Older builds registered via the Run key; clear it so only the batch file controls startup.
+        using (RegistryKey key = Registry.CurrentUser.CreateSubKey(RunKeyPath))
+        {
+            key.DeleteValue(AppName, throwOnMissingValue: false);
+        }
         if (enabled)
         {
-            string target = File.Exists(InstalledExe) ? InstalledExe : Environment.ProcessPath!;
-            key.SetValue(AppName, $"\"{target}\"");
+            string target = targetExe ?? Environment.ProcessPath!;
+            File.WriteAllText(StartupBatch, $"@echo off\r\nstart \"\" \"{target}\"\r\n");
         }
         else
         {
-            key.DeleteValue(AppName, throwOnMissingValue: false);
+            File.Delete(StartupBatch);
         }
     }
 
