@@ -366,23 +366,13 @@ public partial class TabStripWindow : Window
         }
         // Compute the drop before applying any deferred group update — it reads the tab containers the drag happened over.
         Point dropPos = e.GetPosition(Tabs);
-        if (entry.BrowserTab is not null)
+        DropTarget? target = ComputeDropTarget(dropPos, entry);
+        ApplyPendingGroup();
+        if (target is null)
         {
-            DropTarget? target = ComputeDropTarget(dropPos, entry);
-            ApplyPendingGroup();
-            if (target is not null)
-            {
-                // Dropping reorders the real browser tab. The new index is how many of the same window's other tabs land before the slot — dropping among real windows or another window's tabs just clamps to this window's edge. chrome.tabs.move takes the final index, so no adjustment for the vacated slot.
-                int newIndex = target.Rest.Take(target.InsertIndex).Count(m => m.BrowserTab is not null && m.Hwnd == entry.Hwnd);
-                if (newIndex != entry.BrowserTab.Index)
-                {
-                    ExtensionThumbnails.MoveTab(entry.BrowserTab, newIndex);
-                }
-            }
             return;
         }
-        double newKey = ComputeDropKey(dropPos, entry);
-        ApplyPendingGroup();
+        double newKey = ComputeDropKey(target, entry);
         if (newKey != entry.OrderKey)
         {
             reorderRequested(entry, newKey);
@@ -472,23 +462,20 @@ public partial class TabStripWindow : Window
         DropIndicator.Visibility = Visibility.Visible;
     }
 
-    // Returns a key between the slot's neighbors so only the dragged tab's key changes.
-    private double ComputeDropKey(Point pos, WindowEntry dragged)
+    // Display order isn't monotonic in the keys (blocks sort by their minimum tab key), so the immediate neighbors' keys can't be trusted. The dropped entry's key goes between the minimum key before the slot and the minimum key after it — beating every block minimum that follows guarantees the entry (and via the block minimum, its whole window) lands at the drop position. When the minimum before is greater than the minimum after (non-linear keys), the lower bound falls back to zero.
+    private static double ComputeDropKey(DropTarget target, WindowEntry dragged)
     {
-        DropTarget? target = ComputeDropTarget(pos, dragged);
-        if (target is null)
-        {
-            return dragged.OrderKey;
-        }
         List<WindowEntry> rest = target.Rest;
-        if (target.InsertIndex <= 0)
-        {
-            return rest[0].OrderKey - 1;
-        }
         if (target.InsertIndex >= rest.Count)
         {
-            return rest[^1].OrderKey + 1;
+            return rest.Max(m => m.OrderKey) + 1;
         }
-        return (rest[target.InsertIndex - 1].OrderKey + rest[target.InsertIndex].OrderKey) / 2;
+        double minBefore = target.InsertIndex > 0 ? rest.Take(target.InsertIndex).Min(m => m.OrderKey) : 0;
+        double minAfter = rest.Skip(target.InsertIndex).Min(m => m.OrderKey);
+        if (minBefore > minAfter)
+        {
+            minBefore = 0;
+        }
+        return (minBefore + minAfter) / 2;
     }
 }

@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -32,7 +33,6 @@ public partial class MainWindow : Window
     private static readonly TimeSpan IdleFadeRefreshInterval = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan InstallFeedbackDuration = TimeSpan.FromSeconds(1.5);
     // Expanded browser-tab entries slot between their parent and the next real window without disturbing persisted order keys.
-    private const double BrowserTabOrderStep = 0.001;
     // Keeps the Thumbnails tab responsive against a 100k-row snapshot: only this many matches render (and decode images) at once.
     private const int MaxThumbnailResults = 200;
 
@@ -279,6 +279,33 @@ public partial class MainWindow : Window
         ApplyResults(new List<WindowData> { data });
     }
 
+    private string? windowListSortProperty;
+    private ListSortDirection windowListSortDirection;
+
+    // Sorts the List tab by the clicked column; clicking the same header again flips the direction. Columns with a display binding sort by its property; the templated Title column's header text matches its property name.
+    private void OnWindowListHeaderClick(object sender, RoutedEventArgs e)
+    {
+        if (e.OriginalSource is not GridViewColumnHeader header || header.Column is null)
+        {
+            return;
+        }
+        string? property = header.Column.DisplayMemberBinding is Binding binding ? binding.Path.Path : header.Column.Header as string;
+        if (string.IsNullOrEmpty(property))
+        {
+            return;
+        }
+        // The Order column displays a decorated string; sorting lexicographically would cluster the "min …" rows apart from plain keys, so sort it by the numeric key.
+        if (property == nameof(WindowEntry.OrderText))
+        {
+            property = nameof(WindowEntry.OrderKey);
+        }
+        windowListSortDirection = windowListSortProperty == property && windowListSortDirection == ListSortDirection.Ascending ? ListSortDirection.Descending : ListSortDirection.Ascending;
+        windowListSortProperty = property;
+        ICollectionView view = CollectionViewSource.GetDefaultView(WindowList.ItemsSource);
+        view.SortDescriptions.Clear();
+        view.SortDescriptions.Add(new SortDescription(property, windowListSortDirection));
+    }
+
     private void UpdateWorkerTab()
     {
         ExtensionStatusText.Text = ExtensionThumbnails.IsConnected
@@ -371,24 +398,44 @@ public partial class MainWindow : Window
         groups.Clear();
         foreach ((Rect bounds, List<WindowEntry> members) in boxes)
         {
-            // Ties (same-second creation, or windows sharing a name and thus a persisted key) are deduped by pid, then hwnd for same-process windows — never by z-order, which would reorder tabs every time one is focused.
-            List<WindowEntry> ordered = members.OrderBy(EnsureOrder).ThenBy(m => m.Pid).ThenBy(m => (long)m.Hwnd).ToList();
-            WindowEntry? lastFocused = ordered.Where(m => m.LastFocusedAt != 0).OrderByDescending(m => m.LastFocusedAt).FirstOrDefault();
-            var display = new List<WindowEntry>();
-            // Expanded browser tabs always sort after every real window, so a fan of tabs can't bury the actual windows in the strip.
-            var expandedTail = new List<WindowEntry>();
-            foreach (WindowEntry member in ordered)
+            WindowEntry? lastFocused = members.Where(m => m.LastFocusedAt != 0).OrderByDescending(m => m.LastFocusedAt).FirstOrDefault();
+            // Every entry — window or sub-tab — has its own persistent order key; sub-tabs of one window additionally share a block key (the minimum key among that window's tabs).
+            var flat = new List<(WindowEntry Entry, double BlockKey, int SubTab)>();
+            foreach (WindowEntry member in members)
             {
                 member.IsGroupLastFocused = member == lastFocused;
                 List<BrowserTab>? tabs = member.ExpandTabs ? GetTabsForExpandedWindow(member) : null;
                 if (tabs is null || tabs.Count == 0)
                 {
-                    display.Add(member);
+                    double key = EnsureOrder(member);
+                    member.OrderText = $"{key}";
+                    flat.Add((member, key, 0));
                     continue;
                 }
-                expandedTail.AddRange(BuildBrowserTabEntries(member, tabs));
+                List<WindowEntry> tabEntries = BuildBrowserTabEntries(member, tabs);
+                double blockKey = tabEntries.Min(EnsureOrder);
+                member.OrderText = $"min {blockKey}";
+                foreach (WindowEntry tabEntry in tabEntries)
+                {
+                    flat.Add((tabEntry, blockKey, 1));
+                }
             }
-            display.AddRange(expandedTail);
+            // Four consecutive stable sorts. 1: own key. 2: full windows before sub-tabs. 3: block key — the primary — which clumps a window's tabs (identical block key) and interleaves blocks with windows. 4: within each consecutive same-block-key run, back to each entry's own key.
+            List<(WindowEntry Entry, double BlockKey, int SubTab)> pass = flat.OrderBy(x => x.Entry.OrderKey).ToList();
+            pass = pass.OrderBy(x => x.BlockKey).ToList();
+            pass = pass.OrderBy(x => x.SubTab).ToList();
+            var display = new List<WindowEntry>();
+            int runStart = 0;
+            while (runStart < pass.Count)
+            {
+                int runEnd = runStart + 1;
+                while (runEnd < pass.Count && pass[runEnd].BlockKey == pass[runStart].BlockKey)
+                {
+                    runEnd++;
+                }
+                display.AddRange(pass.Skip(runStart).Take(runEnd - runStart).OrderBy(x => x.Entry.OrderKey).Select(x => x.Entry));
+                runStart = runEnd;
+            }
             groups.Add(new WindowGroup
             {
                 CanvasLeft = bounds.X,
@@ -399,7 +446,7 @@ public partial class MainWindow : Window
                 Height = bounds.Height,
                 CountText = display.Count.ToString(),
                 Members = display,
-                ZIndex = ordered.Max(m => m.ZIndex),
+                ZIndex = members.Max(m => m.ZIndex),
             });
         }
         if (tabOrderDirty)
@@ -1084,7 +1131,6 @@ public partial class MainWindow : Window
             // Mirrors the parent's expanded state so the popup's expand icon shows lit on tab entries.
             entry.ExpandTabs = true;
             entry.Title = tab.Title + suffix;
-            entry.OrderKey = parent.OrderKey + (i + 1) * BrowserTabOrderStep;
             entry.IsForeground = parent.IsForeground && tab.Active;
             entry.IsGroupLastFocused = parent.IsGroupLastFocused && tab.Active;
             // The active tab shares the window's focus recency; inactive tabs keep the time from when they were last the active one, fading independently.
@@ -1218,6 +1264,7 @@ public partial class MainWindow : Window
 
     private void ReorderTab(WindowEntry entry, double newKey)
     {
+        AppLog.Write("TabDrag", $"ReorderTab \"{entry.DisplayTitle}\" {entry.OrderKey} -> {newKey}");
         entry.OrderKey = newKey;
         if (entry.Title != LoadingTitle)
         {

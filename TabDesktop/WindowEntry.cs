@@ -170,8 +170,13 @@ public sealed class WindowEntry : INotifyPropertyChanged
     private double idleOpacity = 1;
     public double IdleOpacity { get => idleOpacity; set => Set(ref idleOpacity, value); }
 
-    // Tab sort key: defaults to the detection timestamp (spaced at least 1 apart), replaced by a neighbor-midpoint value on manual reorder. Not bound in XAML, so no INPC.
-    public double OrderKey { get; set; }
+    // Tab sort key: defaults to the process creation time, replaced by a neighbor-midpoint value on manual reorder.
+    private double orderKey;
+    public double OrderKey { get => orderKey; set => Set(ref orderKey, value); }
+
+    // The full effective sort value as the last RecomputeGroups actually used it: "END | <key>" when the expanded-tabs-last bucket applied, else just the key. Stamped at the sort site so this column can never disagree with the real ordering.
+    private string orderText = "";
+    public string OrderText { get => orderText; set => Set(ref orderText, value); }
 
     public long LastFocusedAt { get; set; }
 

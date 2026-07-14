@@ -123,7 +123,7 @@
             </Viewbox>
         </TabItem>
         <TabItem Header="List">
-            <ListView x:Name="WindowList">
+            <ListView x:Name="WindowList" GridViewColumnHeader.Click="OnWindowListHeaderClick">
                 <ListView.ItemContainerStyle>
                     <Style TargetType="ListViewItem">
                         <Setter Property="ToolTip">
@@ -149,6 +149,7 @@
                         </GridViewColumn>
                         <GridViewColumn Header="Position" Width="110" DisplayMemberBinding="{Binding PositionText}" />
                         <GridViewColumn Header="Size" Width="110" DisplayMemberBinding="{Binding SizeText}" />
+                        <GridViewColumn Header="Order" Width="160" DisplayMemberBinding="{Binding OrderText}" />
                         <GridViewColumn Header="PID" Width="70" DisplayMemberBinding="{Binding Pid}" />
                         <GridViewColumn Header="Status" Width="110" DisplayMemberBinding="{Binding Status}" />
                     </GridView>

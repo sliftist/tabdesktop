@@ -1,13 +1,18 @@
+Features
+
+## Interleaved browser tabs in the strip
+- Expanded browser tabs now stay grouped with their parent window and take that window's place in the strip's order, instead of all being pushed to the end after every real window — so a window with its tabs fanned out no longer buries the other windows behind it.
+- Each tab and window carries its own persistent order key, and a window's expanded tabs additionally share a block key (the minimum key among that window's tabs). Ordering sorts primarily by block key, which keeps a window's tabs clumped together while still interleaving those blocks with plain windows at the right position.
+- Because a tab's key no longer derives from a fixed offset off its parent, manually reordering a single tab moves it (and its window's block) to the drop position without disturbing the persisted keys of the surrounding entries.
+
+## Sortable List tab
+- The List tab's columns are now clickable: click a column header to sort by it, and click the same header again to flip between ascending and descending.
+- A new Order column shows each entry's effective sort value, including the `min …` block key used for windows with expanded tabs, so the ordering the strip uses is visible directly in the list.
+- The Order column sorts by its underlying numeric key rather than the decorated display text, so `min …` rows stay in numeric order instead of clustering apart from plain keys.
+
 Bug Fixes
 
-### Tab order no longer shuffles when you focus a window
-
-- Previously, when two windows in a group shared the same sort position, TabDesktop broke the tie by z-order — so clicking a tab (which raises its window) changed the tie-break and the tabs visibly reshuffled every time you switched between them.
-- The result was a strip whose tab order was never stable: the act of using a tab moved it, making it hard to build muscle memory for where a window sits.
-- Ties are now resolved by process id, then window handle for windows sharing a process — deterministic values that don't change on focus — so a tab keeps its slot no matter how often you click it. Expanded browser tabs still sort after every real window.
-
-### Tab order stays consistent across restarts and for windows that share a name
-
-- When TabDesktop first saw a new window it assigned it an order from an ever-incrementing counter seeded off the last-used value, so the position depended on when the app happened to notice the window rather than anything intrinsic — restarts and window recreation could land a window in a different spot.
-- Apps that expose several windows under one title (which share a single persisted order key) had no stable way to separate, and windows still showing the "loading" placeholder were all pinned to position 0.
-- New windows now default to their process creation time (whole seconds) for a position that's stable regardless of when TabDesktop starts, placeholder windows fall back to that same creation-time ordering instead of collapsing to 0, and same-second collisions are cleanly separated by the process-id tie-break. Elevated processes whose creation time can't be read fall back to first-seen time.
+## Tab drag-and-drop landing in the wrong spot
+- With browser-tab blocks interleaved among windows, the strip's display order is no longer monotonic in the underlying keys, since blocks sort by their minimum tab key.
+- The old drop logic picked a new key from the immediate visual neighbors, so dropping a tab or window next to a block could compute a key that placed it somewhere other than where it was released.
+- Dropping now derives the new key from the minimum key before the slot and the minimum key after it (falling back to zero when those keys run non-linear), guaranteeing the dropped entry — and its whole window block — lands at the drop position.

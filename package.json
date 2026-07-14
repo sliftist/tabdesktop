@@ -1,6 +1,6 @@
 {
     "name": "tabdesktop",
-    "version": "0.1.14",
+    "version": "0.1.15",
     "private": true,
     "scripts": {
         "build": "node scripts/dotnet.js build TabDesktop",
