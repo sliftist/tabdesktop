@@ -138,8 +138,6 @@ public partial class TabStripWindow : Window
         double headerWidth = advanced ? 2 * ButtonColumnWidth : ButtonColumnWidth;
         HeaderBorder.Width = headerWidth;
         Height = doubleHeight ? StripHeight * 2 : StripHeight;
-        Left = currentGroup.ScreenLeft / currentDpiScale;
-        Top = Math.Max(SystemParameters.VirtualScreenTop, currentGroup.ScreenTop / currentDpiScale - Height);
         ToggleButton.Content = collapsed ? "»" : "«";
         HeightButton.Content = doubleHeight ? "⇓" : "⇑";
         if (collapsed)
@@ -147,17 +145,27 @@ public partial class TabStripWindow : Window
             TabsScroll.Visibility = Visibility.Collapsed;
             ScrollButtons.Visibility = Visibility.Collapsed;
             Width = headerWidth;
-            return;
         }
-        TabsScroll.Visibility = Visibility.Visible;
-        double groupWidth = currentGroup.Width / currentDpiScale;
-        // Tabs pack into vertical-flow columns of varying height, so the packed width comes from measuring the real panel rather than count × tab width.
-        Tabs.Measure(new Size(double.PositiveInfinity, Height));
-        double tabsWidth = Tabs.DesiredSize.Width;
-        bool overflow = headerWidth + tabsWidth > groupWidth;
-        ScrollButtons.Visibility = overflow ? Visibility.Visible : Visibility.Collapsed;
-        double desired = headerWidth + tabsWidth + (overflow ? ScrollButtonsWidth : 0);
-        Width = Math.Min(desired, Math.Max(groupWidth, headerWidth + TabOuterWidth + ScrollButtonsWidth));
+        else
+        {
+            TabsScroll.Visibility = Visibility.Visible;
+            double groupWidth = currentGroup.Width / currentDpiScale;
+            // Tabs pack into vertical-flow columns of varying height, so the packed width comes from measuring the real panel rather than count × tab width.
+            Tabs.Measure(new Size(double.PositiveInfinity, Height));
+            double tabsWidth = Tabs.DesiredSize.Width;
+            bool overflow = headerWidth + tabsWidth > groupWidth;
+            ScrollButtons.Visibility = overflow ? Visibility.Visible : Visibility.Collapsed;
+            double desired = headerWidth + tabsWidth + (overflow ? ScrollButtonsWidth : 0);
+            // The group-width floor keeps a minimum usable width even when the group is mostly pushed off the side of the screen.
+            Width = Math.Min(desired, Math.Max(groupWidth, headerWidth + TabOuterWidth + ScrollButtonsWidth));
+        }
+        // The strip must always be fully in view: clamp its rect into the virtual screen after the size is known, so a group dragged past an edge (or above the top) keeps its strip visible at the boundary instead of rendering off-screen.
+        double screenLeft = SystemParameters.VirtualScreenLeft;
+        double screenTop = SystemParameters.VirtualScreenTop;
+        double maxLeft = Math.Max(screenLeft, screenLeft + SystemParameters.VirtualScreenWidth - Width);
+        double maxTop = Math.Max(screenTop, screenTop + SystemParameters.VirtualScreenHeight - Height);
+        Left = Math.Clamp(currentGroup.ScreenLeft / currentDpiScale, screenLeft, maxLeft);
+        Top = Math.Clamp(currentGroup.ScreenTop / currentDpiScale - Height, screenTop, maxTop);
     }
 
     // Hidden (not closed) while a fullscreen window covers the group's monitor, so the strip's state and identity survive the movie ending.
