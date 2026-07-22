@@ -58,6 +58,8 @@ public partial class MainWindow : Window
     private readonly HashSet<IntPtr> pendingTitleCaptures = new();
     // Pseudo-entries for expanded browser windows, cached per (hwnd, tab id) so per-tab state — most importantly the screenshot captured while that tab was selected — survives refreshes and tab switches.
     private readonly Dictionary<(IntPtr Hwnd, int TabId), WindowEntry> browserTabEntries = new();
+    // Windows whose tab keys were already re-seeded from the browser's tab order this run.
+    private readonly HashSet<IntPtr> browserOrderSeededHwnds = new();
     // Once a window has matched an extension window id, remember it: during a tab switch the window title and the reported active tab briefly disagree, and without this the expansion would flicker closed.
     private readonly Dictionary<IntPtr, int> browserWindowIdByHwnd = new();
     private readonly ProcessWorkerPool workerPool = new();
@@ -143,6 +145,7 @@ public partial class MainWindow : Window
                 previewCapturedAt.Remove(gone);
                 pendingTitleCaptures.Remove(gone);
                 browserWindowIdByHwnd.Remove(gone);
+                browserOrderSeededHwnds.Remove(gone);
                 foreach ((IntPtr Hwnd, int TabId) key in browserTabEntries.Keys.Where(k => k.Hwnd == gone).ToList())
                 {
                     browserTabEntries.Remove(key);
@@ -435,6 +438,10 @@ public partial class MainWindow : Window
                 }
                 display.AddRange(pass.Skip(runStart).Take(runEnd - runStart).OrderBy(x => x.Entry.OrderKey).Select(x => x.Entry));
                 runStart = runEnd;
+            }
+            for (int i = 0; i < display.Count; i++)
+            {
+                display[i].IsBlockStart = display[i].BrowserTab is not null && (i == 0 || display[i - 1].Hwnd != display[i].Hwnd);
             }
             groups.Add(new WindowGroup
             {
@@ -1111,10 +1118,29 @@ public partial class MainWindow : Window
         return ExtensionThumbnails.TryGetTabsByWindowId(windowId);
     }
 
+    // Spacing for tab keys seeded in browser index order; small enough that a full block stays below the next window's key.
+    private const double BrowserSeedStep = 0.001;
+
+    // The browser's tab order is authoritative the first time a window's tabs are seen each run: while TabDesktop was closed the user may have reordered tabs in the browser, so the persisted name keys are re-seeded in browser index order, anchored at the block's existing minimum so the block itself doesn't jump. In-session drags then take over as usual.
+    private void SeedTabOrderFromBrowser(WindowEntry parent, List<BrowserTab> tabs, string suffix)
+    {
+        List<string> names = tabs.Select(t => TitleRules.Simplify(t.Title + suffix)).ToList();
+        double baseKey = names.Min(n => tabOrder.TryGetValue(n, out double existing) ? existing : GetDefaultOrder(parent));
+        for (int i = 0; i < names.Count; i++)
+        {
+            tabOrder[names[i]] = baseKey + i * BrowserSeedStep;
+        }
+        tabOrderDirty = true;
+    }
+
     private List<WindowEntry> BuildBrowserTabEntries(WindowEntry parent, List<BrowserTab> tabs)
     {
         // The composed title ("Tab Title - Brave") lets every existing title-keyed pipeline — favicons, extension thumbnails, YouTube, title rules — work on tab entries unchanged.
         string suffix = BrowserFavicon.GetBrowserSuffix(parent.Title) ?? "";
+        if (browserOrderSeededHwnds.Add(parent.Hwnd))
+        {
+            SeedTabOrderFromBrowser(parent, tabs, suffix);
+        }
         var result = new List<WindowEntry>();
         var live = new HashSet<(IntPtr, int)>();
         for (int i = 0; i < tabs.Count; i++)

@@ -273,12 +273,16 @@
                                         </DockPanel>
                                     </Border>
                                     <Border x:Name="HoverOverlay" Background="#30000000" Margin="-6,-2" Visibility="Collapsed" />
-                                    <Rectangle Width="3" Margin="-6,-2" HorizontalAlignment="Left" Fill="#CCFFFFFF" IsHitTestVisible="False" ToolTip="A browser tab of an expanded window, not a window of its own">
+                                    <Rectangle Width="3" Margin="-6,-2" HorizontalAlignment="Left" IsHitTestVisible="False" ToolTip="A browser tab of an expanded window, not a window of its own">
                                         <Rectangle.Style>
                                             <Style TargetType="Rectangle">
+                                                <Setter Property="Fill" Value="#CCFFFFFF" />
                                                 <Style.Triggers>
                                                     <DataTrigger Binding="{Binding BrowserTab}" Value="{x:Null}">
                                                         <Setter Property="Visibility" Value="Collapsed" />
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsBlockStart}" Value="True">
+                                                        <Setter Property="Fill" Value="#FF000000" />
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>

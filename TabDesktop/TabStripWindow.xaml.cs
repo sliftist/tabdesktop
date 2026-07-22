@@ -20,6 +20,10 @@ public partial class TabStripWindow : Window
     private const double ScrollButtonsWidth = 44;
     private const double ScrollStep = TabOuterWidth * 2;
     private const double DragThreshold = 6;
+    // Horizontal inset from the group's left edge, so the strip sits slightly inside the windows it covers instead of flush with (or past) their edge.
+    private const double StripInsetX = 30;
+    // A strip keeps its natural X even when squeezed by the screen edge; it only slides left once the room left over drops below this width.
+    private const double MinStripWidth = 100;
     // A dark-green chip keeps the puzzle icon readable on top while still reading as clearly "on" from across the screen.
     private static readonly Brush ExtensionConnectedBrush = new SolidColorBrush(Color.FromRgb(0x2E, 0x7D, 0x32));
     private const double DisconnectedIconOpacity = 0.4;
@@ -140,31 +144,42 @@ public partial class TabStripWindow : Window
         Height = doubleHeight ? StripHeight * 2 : StripHeight;
         ToggleButton.Content = collapsed ? "»" : "«";
         HeightButton.Content = doubleHeight ? "⇓" : "⇑";
+        double desiredWidth;
         if (collapsed)
         {
             TabsScroll.Visibility = Visibility.Collapsed;
             ScrollButtons.Visibility = Visibility.Collapsed;
-            Width = headerWidth;
+            desiredWidth = headerWidth;
         }
         else
         {
             TabsScroll.Visibility = Visibility.Visible;
-            double groupWidth = currentGroup.Width / currentDpiScale;
+            // The inset shrinks the usable span so the inset strip still ends within the group's right edge.
+            double availableWidth = currentGroup.Width / currentDpiScale - StripInsetX;
             // Tabs pack into vertical-flow columns of varying height, so the packed width comes from measuring the real panel rather than count × tab width.
             Tabs.Measure(new Size(double.PositiveInfinity, Height));
             double tabsWidth = Tabs.DesiredSize.Width;
-            bool overflow = headerWidth + tabsWidth > groupWidth;
+            bool overflow = headerWidth + tabsWidth > availableWidth;
             ScrollButtons.Visibility = overflow ? Visibility.Visible : Visibility.Collapsed;
-            double desired = headerWidth + tabsWidth + (overflow ? ScrollButtonsWidth : 0);
-            // The group-width floor keeps a minimum usable width even when the group is mostly pushed off the side of the screen.
-            Width = Math.Min(desired, Math.Max(groupWidth, headerWidth + TabOuterWidth + ScrollButtonsWidth));
+            double packed = headerWidth + tabsWidth + (overflow ? ScrollButtonsWidth : 0);
+            // The available-width floor keeps a minimum usable width even when the group is mostly pushed off the side of the screen.
+            desiredWidth = Math.Min(packed, Math.Max(availableWidth, headerWidth + TabOuterWidth + ScrollButtonsWidth));
         }
-        // The strip must always be fully in view: clamp its rect into the virtual screen after the size is known, so a group dragged past an edge (or above the top) keeps its strip visible at the boundary instead of rendering off-screen.
+        // X placement: start at the inset position and take the smaller of the wanted width and the room to the screen's right edge — a wide strip gets trimmed, never shifted inward. Only when the remaining room drops below the minimum does the strip slide left just enough to keep that minimum on-screen.
         double screenLeft = SystemParameters.VirtualScreenLeft;
         double screenTop = SystemParameters.VirtualScreenTop;
-        double maxLeft = Math.Max(screenLeft, screenLeft + SystemParameters.VirtualScreenWidth - Width);
+        double screenRight = screenLeft + SystemParameters.VirtualScreenWidth;
+        double left = Math.Max(screenLeft, currentGroup.ScreenLeft / currentDpiScale + StripInsetX);
+        double width = Math.Min(desiredWidth, screenRight - left);
+        double minWidth = Math.Min(desiredWidth, MinStripWidth);
+        if (width < minWidth)
+        {
+            width = minWidth;
+            left = Math.Max(screenLeft, screenRight - width);
+        }
+        Width = width;
+        Left = left;
         double maxTop = Math.Max(screenTop, screenTop + SystemParameters.VirtualScreenHeight - Height);
-        Left = Math.Clamp(currentGroup.ScreenLeft / currentDpiScale, screenLeft, maxLeft);
         Top = Math.Clamp(currentGroup.ScreenTop / currentDpiScale - Height, screenTop, maxTop);
     }
 
@@ -470,20 +485,39 @@ public partial class TabStripWindow : Window
         DropIndicator.Visibility = Visibility.Visible;
     }
 
-    // Display order isn't monotonic in the keys (blocks sort by their minimum tab key), so the immediate neighbors' keys can't be trusted. The dropped entry's key goes between the minimum key before the slot and the minimum key after it — beating every block minimum that follows guarantees the entry (and via the block minimum, its whole window) lands at the drop position. When the minimum before is greater than the minimum after (non-linear keys), the lower bound falls back to zero.
+    // When the entry after the slot belongs to the dragged entry's own window, the drop is a within-block move and the plain neighbor average works. When it belongs to a different window, the meaningful boundary is that window's block start: its minimum-key (first displayed) tab and the entry directly before it — averaging those places the dragged key ahead of the whole block. If the pair we end up looking at is itself out of order (keys aren't globally monotonic), fall back to just under the after-entry's key.
+    private const double OutOfOrderDropStep = 0.1;
+
     private static double ComputeDropKey(DropTarget target, WindowEntry dragged)
     {
-        List<WindowEntry> rest = target.Rest;
-        if (target.InsertIndex >= rest.Count)
+        // Sub-tab entries and plain-window entries are two separate orderings: a dragged entry only compares against neighbors of its own kind, so a plain window sitting between two tab blocks can never corrupt a tab's key computation (and vice versa).
+        bool subTab = dragged.BrowserTab is not null;
+        List<WindowEntry> rest = target.Rest.Where(m => (m.BrowserTab is not null) == subTab).ToList();
+        int insertIndex = target.Rest.Take(target.InsertIndex).Count(m => (m.BrowserTab is not null) == subTab);
+        if (rest.Count == 0)
+        {
+            return dragged.OrderKey;
+        }
+        if (insertIndex >= rest.Count)
         {
             return rest.Max(m => m.OrderKey) + 1;
         }
-        double minBefore = target.InsertIndex > 0 ? rest.Take(target.InsertIndex).Min(m => m.OrderKey) : 0;
-        double minAfter = rest.Skip(target.InsertIndex).Min(m => m.OrderKey);
-        if (minBefore > minAfter)
+        WindowEntry next = rest[insertIndex];
+        WindowEntry? prev = insertIndex > 0 ? rest[insertIndex - 1] : null;
+        if (next.Hwnd != dragged.Hwnd)
         {
-            minBefore = 0;
+            int first = insertIndex;
+            while (first > 0 && rest[first - 1].Hwnd == next.Hwnd)
+            {
+                first--;
+            }
+            next = rest[first];
+            prev = first > 0 ? rest[first - 1] : null;
         }
-        return (minBefore + minAfter) / 2;
+        if (prev is null || prev.OrderKey > next.OrderKey)
+        {
+            return next.OrderKey - OutOfOrderDropStep;
+        }
+        return (prev.OrderKey + next.OrderKey) / 2;
     }
 }

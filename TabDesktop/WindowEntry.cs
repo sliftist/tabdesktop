@@ -166,6 +166,10 @@ public sealed class WindowEntry : INotifyPropertyChanged
     private bool isDragging;
     public bool IsDragging { get => isDragging; set => Set(ref isDragging, value); }
 
+    // True on the first displayed tab of a window's block; the strip blackens this tab's edge line to mark where a new window's tab run starts.
+    private bool isBlockStart;
+    public bool IsBlockStart { get => isBlockStart; set => Set(ref isBlockStart, value); }
+
     // Fades the tab as the window sits unfocused; recomputed on a slow timer in MainWindow.
     private double idleOpacity = 1;
     public double IdleOpacity { get => idleOpacity; set => Set(ref idleOpacity, value); }
